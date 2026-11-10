@@ -13,6 +13,7 @@
 #include <platform/bcm28xx/pll_read.h>
 #include <platform/bcm28xx/power.h>
 #include <platform/bcm28xx/udelay.h>
+#include <platform/bcm28xx/boot_timing.h>
 #include <stdio.h>
 
 extern const uint8_t arm_chainloader_start[], arm_chainloader_end[];
@@ -44,6 +45,7 @@ static void prepare_usb_host(uint32_t revision) {
 
 static void __attribute__((optimize("-O1"))) arm_chainloader_init(uint level) {
   (void)level;
+  bcm_boot_timing_mark(BCM_BOOT_T3_LK_ENTRY);
   uint32_t active, revision = otp_read(30), serial = otp_read(28);
   uint32_t uart_hz;
   size_t payload_size = (uintptr_t)arm_chainloader_end - (uintptr_t)arm_chainloader_start;
@@ -74,6 +76,8 @@ static void __attribute__((optimize("-O1"))) arm_chainloader_init(uint level) {
   }
   power_arm_start();
   puts("ARM: releasing chainloader");
+  bcm_boot_timing_mark(BCM_BOOT_T11_ARM_HANDOFF);
   arm_chainloader_release_bridge();
+  bcm_dsi7_run_boot_animation();
 }
 LK_INIT_HOOK(arm_chainloader, &arm_chainloader_init, LK_INIT_LEVEL_PLATFORM + 10);

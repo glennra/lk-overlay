@@ -21,6 +21,7 @@
 #include <platform/bcm28xx.h>
 #include <platform/bcm28xx/a2w.h>
 #include <platform/bcm28xx/clock.h>
+#include <platform/bcm28xx/boot_timing.h>
 #include <platform/bcm28xx/cm.h>
 #include <platform/bcm28xx/gpio.h>
 #include <platform/bcm28xx/otp.h>
@@ -630,6 +631,7 @@ static void __attribute__(( optimize("-O1"))) benchmark_self(void) {
 #endif
 
 void platform_init(void) {
+  bcm_boot_timing_mark(BCM_BOOT_T0_PLATFORM_INIT);
   logf("\n");
 #if BCM2835 == 1
   gpio_config(16, kBCM2708PinmuxOut);

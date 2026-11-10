@@ -24,6 +24,7 @@ ifeq ($(CONFIG_SPI_BOOT),1)
 endif
 
 MODULE_SRCS += \
+	$(LOCAL_DIR)/boot_timing.c \
 	$(LOCAL_DIR)/stage1.c \
 
 include make/module.mk

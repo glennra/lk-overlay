@@ -89,6 +89,10 @@ extern "C" {
 
 #define LOCAL_TRACE 0
 
+#ifndef STAGE1_SD_DATA_MHZ
+#define STAGE1_SD_DATA_MHZ 25u
+#endif
+
 struct BCM2708SDHost : BlockDevice {
   bool is_sdhc;
   bool is_high_capacity;
@@ -547,7 +551,7 @@ struct BCM2708SDHost : BlockDevice {
       /* work out the capacity of the card in bytes */
       capacity_bytes = (SD_CSD_V2_CAPACITY(csd) * block_length);
 
-      clock_div = vpu_clock / 25; // 5;
+      clock_div = vpu_clock / STAGE1_SD_DATA_MHZ;
     } else if (SD_CSD_CSDVER(csd) == SD_CSD_CSDVER_1_0) {
       printf("    CSD     : Ver 1.0\n");
       printf("    Capacity: %d\n", SD_CSD_CAPACITY(csd));
@@ -558,7 +562,7 @@ struct BCM2708SDHost : BlockDevice {
       /* work out the capacity of the card in bytes */
       capacity_bytes = (SD_CSD_CAPACITY(csd) * block_length);
 
-      clock_div = vpu_clock / 25;
+      clock_div = vpu_clock / STAGE1_SD_DATA_MHZ;
     } else {
       printf("ERROR: Unknown CSD version 0x%x!\n", SD_CSD_CSDVER(csd));
       return false;

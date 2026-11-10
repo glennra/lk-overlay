@@ -3,6 +3,7 @@
 #include <platform/bcm28xx/dsi.h>
 #include <platform/bcm28xx/panel.h>
 #include <platform/bcm28xx/udelay.h>
+#include <platform/bcm28xx/boot_timing.h>
 
 #define TC_PPI_STARTPPI 0x0104
 #define TC_PPI_LPTXTIMECNT 0x0114
@@ -34,6 +35,7 @@ int bcm_tc358762_init(void) {
   if (bcm_panel_attiny_init() || bcm_panel_attiny_power(1) ||
       bcm_panel_attiny_bridge_power_on() || bcm_panel_attiny_set_bridge_reset(1))
     return -1;
+  bcm_boot_timing_mark(BCM_BOOT_T6_BRIDGE_PANEL_READY);
 
   if (tc358762_write(TC_DSI_LANEENABLE, 3) ||
       tc358762_write(TC_PPI_D0S_CLRSIPOCOUNT, 5) ||

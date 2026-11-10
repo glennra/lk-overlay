@@ -22,6 +22,18 @@
 #endif
 
 #include "stage1.h"
+#include "boot_timing.h"
+
+#ifndef STAGE1_UART_OUTPUT
+#define STAGE1_UART_OUTPUT 1
+#endif
+
+#if !STAGE1_UART_OUTPUT
+/* Keep the quiet timing build from spending time formatting UART messages. */
+#define puts(...) do { } while (0)
+#define printf(...) do { } while (0)
+#define print_timestamp(...) do { } while (0)
+#endif
 
 #define MB (1024*1024)
 #define logf(fmt, ...) { print_timestamp(); printf("[stage1:%s:%d]: "fmt, __FUNCTION__, __LINE__, ##__VA_ARGS__); }
@@ -208,6 +220,7 @@ void add_boot_target(const char *device) {
 static void stage1_entry(const struct app_descriptor *app, void *args) {
   int ret;
   puts("stage1 entry\n");
+  stage1_boot_timing_mark(STAGE1_BOOT_T0_APP_ENTRY);
   // sdhost initializes in a blocking mode before threads are ran, so will be available immediately if detected
   // usb initiailizes in a thread and wont show up until stage1_msd_probed() gets called
 #if defined(STAGE1_SD_FAT)

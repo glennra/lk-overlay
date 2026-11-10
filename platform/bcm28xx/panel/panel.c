@@ -4,7 +4,15 @@
 #include <platform/bcm28xx/i2c.h>
 #include <platform/bcm28xx/panel.h>
 #include <platform/bcm28xx/udelay.h>
+#include <platform/bcm28xx/boot_timing.h>
 #include <stdio.h>
+
+#ifndef DSI_PANEL_DELAY_SCALE_PCT
+#define DSI_PANEL_DELAY_SCALE_PCT 100u
+#endif
+
+#define PANEL_DELAY_US(usec) \
+  udelay(((uint32_t)(usec) * DSI_PANEL_DELAY_SCALE_PCT) / 100u)
 
 #define ATTINY_BUS 0
 #define ATTINY_ADDR 0x45
@@ -58,44 +66,36 @@ int bcm_panel_attiny_power(int enable) {
   if (!enable) {
     if (attiny_write(ATTINY_REG_PWM, 0))
       return -1;
-    udelay(5000);
+    PANEL_DELAY_US(5000);
     if (attiny_write(ATTINY_REG_PORTA, 0) ||
         attiny_write(ATTINY_REG_PORTB, 1u << 1) ||
         attiny_write(ATTINY_REG_PORTC, 0))
       return -1;
-    udelay(30000);
+    PANEL_DELAY_US(30000);
     return 0;
   }
+  bcm_boot_timing_mark(BCM_BOOT_T5_PANEL_POWER_BEGIN);
   if (attiny_write(ATTINY_REG_PORTC, 0))
     return -1;
-  udelay(5000);
+  PANEL_DELAY_US(5000);
   if (attiny_write(ATTINY_REG_PORTA, ATTINY_PA_LCD_LR))
     return -1;
-  udelay(5000);
+  PANEL_DELAY_US(5000);
   if (attiny_write(ATTINY_REG_PORTB, 1u << 7))
     return -1;
-  udelay(5000);
+  PANEL_DELAY_US(5000);
   if (attiny_write(ATTINY_REG_PORTC, ATTINY_PC_LED_EN))
     return -1;
-  udelay(80000);
+  PANEL_DELAY_US(80000);
   return 0;
 }
 
 int bcm_panel_attiny_bridge_power_on(void) {
-  uint8_t portb = 0;
-  udelay(100000);
+  PANEL_DELAY_US(100000);
   if (attiny_write(ATTINY_REG_POWERON, 1))
     return -1;
-  udelay(25000);
-  for (unsigned int i = 0; i < 100; ++i) {
-    if (attiny_read(ATTINY_REG_PORTB, &portb))
-      return -1;
-    if (portb & 1u)
-      return 0;
-    udelay(1000);
-  }
-  /* The working panel can accept bridge writes without this status bit. */
-  printf("ATTiny: bridge power not confirmed (PORTB=0x%02x)\n", portb);
+  PANEL_DELAY_US(25000);
+  /* PORTB bit 0 is advisory; the bridge accepts DSI configuration without it. */
   return 0;
 }
 
@@ -110,17 +110,17 @@ int bcm_panel_attiny_set_bridge_reset(int release) {
     return -1;
   if (!release)
     return 0;
-  udelay(5000);
+  PANEL_DELAY_US(5000);
   /* Select TC358762 SYSPMCTRL through the ATTiny indirect interface. */
   if (attiny_write(ATTINY_REG_REG_ADDR_H, 0x04))
     return -1;
-  udelay(5000);
+  PANEL_DELAY_US(5000);
   if (attiny_write(ATTINY_REG_REG_ADDR_L, 0x7c))
     return -1;
-  udelay(5000);
+  PANEL_DELAY_US(5000);
   if (attiny_write(ATTINY_REG_REG_WRITE_DATA_H, 0x00) ||
       attiny_write(ATTINY_REG_REG_WRITE_DATA_L, 0x00))
     return -1;
-  udelay(100000);
+  PANEL_DELAY_US(100000);
   return 0;
 }

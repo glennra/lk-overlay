@@ -67,6 +67,7 @@ MODULE_SRCS += \
 	$(LOCAL_DIR)/gpio.c \
 	$(LOCAL_DIR)/udelay.c \
 	$(LOCAL_DIR)/print_timestamp.c \
+	$(LOCAL_DIR)/boot_timing.c \
 	#$(LOCAL_DIR)/i2c.c \
 
 
