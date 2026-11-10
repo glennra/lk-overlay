@@ -20,6 +20,14 @@
 #define DSI_FIRST_FRAME_SETTLE_US 49000u
 #endif
 
+#ifndef WITH_MATRIX_BOOT_ANIMATION
+#define WITH_MATRIX_BOOT_ANIMATION 0
+#endif
+
+#if WITH_MATRIX_BOOT_ANIMATION
+void bcm_matrix_boot_animation(gfx_surface *linux_fb);
+#endif
+
 static gfx_surface *primary_fb;
 static gfx_surface *back_fb;
 static hvs_layer *display_layer;
@@ -92,6 +100,11 @@ static void animation_commit_dlist(void) {
 void bcm_dsi7_run_boot_animation(void) {
   if (!scanout_ready || !back_fb)
     return;
+
+#if WITH_MATRIX_BOOT_ANIMATION
+  bcm_matrix_boot_animation(display_layer->fb);
+  return;
+#endif
 
   /* Linux receives the buffer that is active at ARM release. */
   gfx_surface *linux_fb = display_layer->fb;
@@ -198,14 +211,21 @@ static int prepare_framebuffer(void) {
 }
 
 static int prepare_scanout(void) {
+#if !WITH_MATRIX_BOOT_ANIMATION
   static const uint32_t colors[] = {
     0xffffffff, 0xffffff00, 0xff00ffff, 0xff00ff00,
     0xffff00ff, 0xffff0000, 0xff0000ff, 0xff000000,
   };
+#endif
   if (prepare_framebuffer())
     return -1;
+#if WITH_MATRIX_BOOT_ANIMATION
+  /* Matrix owns the first visible frame; never expose the diagnostic bars. */
+  gfx_clear(back_fb, 0xff000000);
+#else
   for (unsigned int bar = 0; bar < 8; ++bar)
     gfx_fillrect(back_fb, bar * 100u, 0, 100u, DSI_FB_HEIGHT, colors[bar]);
+#endif
   gfx_flush(back_fb);
   display_layer->fb = back_fb;
   hvs_configure_channel_dsi1(DSI_FB_WIDTH, DSI_FB_HEIGHT);
@@ -252,7 +272,9 @@ int bcm_dsi7_scanout(void) {
   scanout_ready = true;
   bcm_boot_timing_mark(BCM_BOOT_T10_FIRST_FRAME_READY);
   bcm_boot_timing_dump();
+#if !WITH_MATRIX_BOOT_ANIMATION
   puts("DSI: 800x480 color bars active");
+#endif
   return 0;
 }
 
