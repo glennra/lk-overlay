@@ -37,6 +37,7 @@ struct pixel_valve {
 
 void setup_pixelvalve(const struct pv_timings *timings, int pvnr);
 void enable_pixelvalve(int pvnr);
+void enable_pixelvalve_video(int pvnr);
 void setup_pv_interrupt(int pvnr, int_handler handler, void *arg);
 struct pixel_valve *getPvAddr(int pvnr);
 

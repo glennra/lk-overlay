@@ -51,6 +51,12 @@ struct pixel_valve *getPvAddr(int pvnr) {
   return rawpv;
 }
 
+/* Some BCM2837 PV2 status reads can stall while the HDMI clock is starting.
+ * Retain the programmed values so enabling the PV does not require a readback
+ * of the control registers. */
+static uint32_t pv_control_value[3];
+static uint32_t pv_vc_value[3];
+
 unsigned int getPvIrq(int pvnr) {
   assert(pvnr <= 2);
   switch (pvnr) {
@@ -69,16 +75,16 @@ void setup_pixelvalve(const struct pv_timings *t, int pvnr) {
   struct pixel_valve *rawpv = getPvAddr(pvnr);
   printf("setup_pixelvalve, pvnr=%d, %dx%d\n", pvnr, t->hactive, t->vactive);
 
-  // reset the PV fifo
-  rawpv->c = 0;
-  rawpv->c = PV_CONTROL_FIFO_CLR | PV_CONTROL_EN;
-  rawpv->c = 0;
-
+  printf("PV%d: writing horizontal timing\n", pvnr);
   rawpv->horza = (t->hbp << 16) | t->hsync;
   rawpv->horzb = (t->hfp << 16) | t->hactive;
 
+  printf("PV%d: writing vertical timing\n", pvnr);
+  printf("PV%d: writing verta\n", pvnr);
   rawpv->verta = (t->vbp << 16) | t->vsync;
+  printf("PV%d: writing vertb\n", pvnr);
   rawpv->vertb = (t->vfp << 16) | t->vactive;
+  printf("PV%d: writing vc\n", pvnr);
 
   if (t->interlaced) {
     puts("interlaced pv");
@@ -95,14 +101,21 @@ void setup_pixelvalve(const struct pv_timings *t, int pvnr) {
 #define PV_CONTROL_FORMAT_DSIV_24 (4u << 21)
 
   bool dsi = t->clock_mux == clk_dsi;
-  rawpv->vc = (dsi ? BV(3) : BV(0)) | // DSI output mode or legacy video enable
-            BV(1)| // continuous
+  pv_vc_value[pvnr] = (dsi ? BV(3) : BV(0)) | // DSI output mode or legacy video enable
+            BV(1) | // continuous
             (t->interlaced ? BV(4) : 0);
+  /* HDMI PV2 VC writes can stall while the HDMI scheduler is still being
+   * brought up. DSI retains the original early VC programming sequence. */
+  if (dsi)
+    rawpv->vc = pv_vc_value[pvnr];
+  printf("PV%d: vc write complete\n", pvnr);
 
   if (dsi)
     rawpv->dsi_h_active = t->hactive;
-  else
+  else {
+    printf("PV%d: writing h_active\n", pvnr);
     rawpv->h_active = t->hactive;
+  }
 
   uint32_t fifo_len_bytes = 64;
   fifo_len_bytes = fifo_len_bytes - 3 * 6;
@@ -115,22 +128,49 @@ void setup_pixelvalve(const struct pv_timings *t, int pvnr) {
   else if (t->clock_mux == clk_vec) clk = PV_CONTROL_CLK_SELECT_VEC;
 #endif
 
-  rawpv->c = (dsi ? PV_CONTROL_FORMAT_DSIV_24 : PV_CONTROL_EN) |
-            PV_CONTROL_FIFO_CLR |
+  printf("PV%d: timing registers programmed, enabling output\n", pvnr);
+  /*
+   * Keep the PixelValve disabled while programming its final control word.
+   * The enable is a separate operation below, matching the Linux VC4
+   * sequence.  Enabling PV2 or clearing its FIFO in this write can stall the
+   * VPU before the HDMI encoder and HVS are ready to consume the first FIFO
+   * word.  The image-domain reset already provides an empty FIFO here.
+   */
+  uint32_t control = (dsi ? PV_CONTROL_FORMAT_DSIV_24 : 0) |
             CLK_SELECT(clk) |
             PIXEL_REP(1 - 1) |
             BV(12) | // wait for h-start
             BV(13) | // trigger underflow
             BV(14) | // clear at start
             FIFO_LEVEL(fifo_len_bytes);
+  printf("PV%d: writing control 0x%08x\n", pvnr, control);
+  pv_control_value[pvnr] = control;
+  rawpv->c = control;
+  printf("PV%d: control write complete\n", pvnr);
 }
 
 void enable_pixelvalve(int pvnr) {
   struct pixel_valve *rawpv = getPvAddr(pvnr);
   if (!rawpv)
     return;
-  rawpv->c |= PV_CONTROL_EN;
-  rawpv->vc |= BV(0);
+  printf("PV%d: enabling control\n", pvnr);
+  pv_control_value[pvnr] |= PV_CONTROL_EN;
+  rawpv->c = pv_control_value[pvnr];
+  printf("PV%d: control enabled\n", pvnr);
+  if (pv_vc_value[pvnr] & BV(3)) {
+    pv_vc_value[pvnr] |= BV(0);
+    rawpv->vc = pv_vc_value[pvnr];
+  }
+  printf("PV%d: video clock enabled\n", pvnr);
+}
+
+void enable_pixelvalve_video(int pvnr) {
+  struct pixel_valve *rawpv = getPvAddr(pvnr);
+  if (!rawpv || (pv_vc_value[pvnr] & BV(3)))
+    return;
+  pv_vc_value[pvnr] |= BV(0);
+  rawpv->vc = pv_vc_value[pvnr];
+  printf("PV%d: HDMI video path enabled\n", pvnr);
 }
 
 void setup_pv_interrupt(int pvnr, int_handler handler, void *arg) {

@@ -856,6 +856,7 @@ bool clock_set_hsm(int freq, enum peripheral_clock_tap source) {
   float desired_divider = (float)reference / freq;
   int divisor_fixed = desired_divider * 4096;
   int mash = 0;
+  uint32_t ctl;
   printf("ref: %d, target: %d, divisor(f): %f, divisor(fixed): 0x%x\n", reference, freq, (double)desired_divider, divisor_fixed);
   if (divisor_fixed < 0x2000) {
     puts("divisor too low, abort!");
@@ -866,7 +867,30 @@ bool clock_set_hsm(int freq, enum peripheral_clock_tap source) {
     return false;
   }
   if (divisor_fixed & 0xfff) mash = 1;
+
+  /* Match the BCM2835 CPRMAN clock-manager sequence: stop an active clock,
+   * wait for its divider cycle to finish, update the control/divider, then
+   * enable it with the gate bit.  Without this, HSM remains BUSY on the
+   * BCM2837 and the HDMI core is not clocked reliably. */
+  ctl = *REG32(CM_HSMCTL);
+  if (ctl & CM_HSMCTL_ENAB_SET) {
+    *REG32(CM_HSMCTL) = CM_PASSWORD | (ctl & ~CM_HSMCTL_ENAB_SET);
+    for (unsigned i = 0; i < 10000; ++i) {
+      if ((*REG32(CM_HSMCTL) & CM_HSMCTL_BUSY_SET) == 0)
+        break;
+      udelay(1);
+      if (i == 9999) {
+        puts("HSM clock disable timeout waiting for BUSY to clear");
+        return false;
+      }
+    }
+  }
+
+  ctl &= ~(0xfu | CM_HSMCTL_FRAC_SET);
+  ctl |= source | (mash ? CM_HSMCTL_FRAC_SET : 0);
+  *REG32(CM_HSMCTL) = CM_PASSWORD | ctl;
   *REG32(CM_HSMDIV) = CM_PASSWORD | divisor_fixed;
-  *REG32(CM_HSMCTL) = CM_PASSWORD | CM_PWMCTL_ENABLE | source | mash<<CM_PWMCTL_MASH_LSB;
+  *REG32(CM_HSMCTL) = CM_PASSWORD | ctl | CM_HSMCTL_ENAB_SET |
+      CM_HSMCTL_GATE_SET;
   return true;
 }

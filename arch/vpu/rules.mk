@@ -15,7 +15,9 @@ $(BUILDDIR)/system-onesegment.ld: $(LOCAL_DIR)/start.ld
 	cp $< $@
 
 # TODO, fix the linker flags
-ARCH_LDFLAGS += -L/nix/store/cwpy4q0qvdwdif1zfwnfg5gi50c6j9w8-vc4-elf-stage-final-gcc-debug-6.5.0/lib/gcc/vc4-elf/6.2.1/
+# Keep this path aligned with the workspace VC4 toolchain.  The old absolute
+# Nix-store path is not present on this host.
+ARCH_LDFLAGS += -L/home/glenn/projects/car-hmi/gpu-boot/vc4-toolchain/prefix/lib/gcc/vc4-elf/6.2.1/
 ARCH_CFLAGS += -fstack-usage -funroll-loops -Os -fno-plt
 #ARCH_COMPILEFLAGS += -fno-omit-frame-pointer
 

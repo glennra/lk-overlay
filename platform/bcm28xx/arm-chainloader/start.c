@@ -6,7 +6,13 @@
 #include <platform/bcm28xx/arm.h>
 #include <platform/bcm28xx/arm_chainloader.h>
 #include <platform/bcm28xx/cm.h>
+#if BCM283X_HDMI
+#include <platform/bcm28xx/hdmi_framebuffer.h>
+int bcm_hdmi_framebuffer_handoff(uint32_t *physical);
+void bcm_hdmi_run_boot_animation(void);
+#else
 #include <platform/bcm28xx/display.h>
+#endif
 #include <platform/bcm28xx/gpio.h>
 #include <platform/bcm28xx/otp.h>
 #include <platform/bcm28xx/pll.h>
@@ -45,12 +51,21 @@ static void prepare_usb_host(uint32_t revision) {
 
 static void __attribute__((optimize("-O1"))) arm_chainloader_init(uint level) {
   (void)level;
+#if HDMI_HOLD_ARM_BOOT
+  puts("ARM: Linux handoff disabled; staying in LK app shell");
+  return;
+#endif
   bcm_boot_timing_mark(BCM_BOOT_T3_LK_ENTRY);
   uint32_t active, revision = otp_read(30), serial = otp_read(28);
   uint32_t uart_hz;
   size_t payload_size = (uintptr_t)arm_chainloader_end - (uintptr_t)arm_chainloader_start;
   /* The firmware-data producer currently describes a 1 GiB Pi 3B/3B+. */
-  if (!arm_chainloader_board_supported(revision) || bcm_dsi7_framebuffer_handoff(&active)) {
+  if (!arm_chainloader_board_supported(revision) ||
+#if BCM283X_HDMI
+      bcm_hdmi_framebuffer_handoff(&active)) {
+#else
+      bcm_dsi7_framebuffer_handoff(&active)) {
+#endif
     puts("ARM: unsupported board or display not ready; not releasing ARM");
     return;
   }
@@ -78,6 +93,10 @@ static void __attribute__((optimize("-O1"))) arm_chainloader_init(uint level) {
   puts("ARM: releasing chainloader");
   bcm_boot_timing_mark(BCM_BOOT_T11_ARM_HANDOFF);
   arm_chainloader_release_bridge();
+#if BCM283X_HDMI
+  bcm_hdmi_run_boot_animation();
+#else
   bcm_dsi7_run_boot_animation();
+#endif
 }
 LK_INIT_HOOK(arm_chainloader, &arm_chainloader_init, LK_INIT_LEVEL_PLATFORM + 10);
