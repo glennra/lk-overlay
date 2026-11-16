@@ -490,10 +490,15 @@ void platform_early_init(void) {
       //setup_plla(1000 * 1000 * 1000, 10, 10);
       setup_plla(PLLA_FREQ_MHZ * 1000 * 1000, PLLA_CORE_DIV, PLLA_PER_DIV);
 #if defined(BCM283X_HDMI)
-      /* Keep PLLH inside the BCM2835-supported range while providing the
-       * 640x480 pixel relationship: VCO=756MHz, PIX=/3=252MHz (the PHY
-       * derives the 25.2MHz TMDS pixel rate), AUX=/3=252MHz for HSM=/2=126MHz. */
+#if HDMI_MODE_1080P60
+      /* 1080p60 diagnostic profile: PLLH_PIX=/1 provides the 148.5MHz
+       * pixel clock and PLLH_AUX feeds a 150MHz HSM clock. */
+      setup_pllh(1485 * 1000 * 1000, 1, 1);
+#else
+      /* 640x480 baseline: PIX=/3=252MHz (the PHY derives the 25.2MHz
+       * TMDS pixel rate), AUX=/3=252MHz for HSM=/2=126MHz. */
       setup_pllh(756 * 1000 * 1000, 3, 3);
+#endif
 #else
       setup_pllh(108 * 6 * 1000 * 1000, 2, 6);
 #endif

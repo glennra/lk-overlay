@@ -887,6 +887,10 @@ bool clock_set_hsm(int freq, enum peripheral_clock_tap source) {
   }
 
   ctl &= ~(0xfu | CM_HSMCTL_FRAC_SET);
+  /* The disable write above must also be reflected in the local control
+   * value.  Otherwise the next control write can re-enable HSM before the
+   * divider is updated. */
+  ctl &= ~CM_HSMCTL_ENAB_SET;
   ctl |= source | (mash ? CM_HSMCTL_FRAC_SET : 0);
   *REG32(CM_HSMCTL) = CM_PASSWORD | ctl;
   *REG32(CM_HSMDIV) = CM_PASSWORD | divisor_fixed;

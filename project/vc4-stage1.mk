@@ -8,7 +8,10 @@ MODULES += \
 	platform/bcm28xx/rpi-ddr2/autoram \
 
 #MODULES += app/shell
-MODULES += platform/bcm28xx/usb-phy
+# Stage 1 only loads the second-stage ELF from FAT.  USB PHY initialization
+# is not required unless a USB host/device feature is explicitly enabled;
+# leaving it unconditional can block forever in the MDIO busy wait before
+# stage1_entry() gets a chance to load stage 2.
 MODULES += app/vc4-stage1
 
 #MODULES += lib/lua
