@@ -20,3 +20,13 @@ HDMI_DIAG_DVI ?= 0
 GLOBAL_DEFINES += HDMI_DIAG_DVI=$(HDMI_DIAG_DVI)
 HDMI_EARLY_PV_PROBE ?= 0
 GLOBAL_DEFINES += HDMI_EARLY_PV_PROBE=$(HDMI_EARLY_PV_PROBE)
+
+# Optional Redox-sequence 1080p diagnostic; disabled by default.
+HDMI_DIAG_REDOX_BACKGROUND ?= 0
+GLOBAL_DEFINES += HDMI_DIAG_REDOX_BACKGROUND=$(HDMI_DIAG_REDOX_BACKGROUND)
+
+# Redox uses a 500 MHz PLLC_PER parent.  LK normally sets this tap to
+# 250 MHz.  Limit the altered shared clock to this diagnostic build.
+ifeq ($(HDMI_DIAG_REDOX_BACKGROUND),1)
+PLLC_PER_DIV := 1
+endif

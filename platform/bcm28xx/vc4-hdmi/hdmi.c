@@ -15,7 +15,7 @@
 #include <platform/bcm28xx/hdmi_framebuffer.h>
 #include <stdlib.h>
 
-#if HDMI_DIAG_DVI && HDMI_MODE_1080P60
+#if HDMI_DIAG_DVI && HDMI_MODE_1080P60 && !HDMI_DIAG_REDOX_BACKGROUND
 #error "HDMI_DIAG_DVI is limited to the 640x480 diagnostic"
 #endif
 
@@ -318,7 +318,222 @@ static void hdmi_prepare_scanout(void) {
   printf("HDMI: HVS1 list=%u PV2 scanout enabled\n", start);
 }
 
+#if HDMI_DIAG_REDOX_BACKGROUND
+#if !HDMI_MODE_1080P60 || !HDMI_DIAG_DVI || !HDMI_HOLD_ARM_BOOT
+#error "S1 requires 1080p, DVI signalling and ARM boot hold"
+#endif
+#ifdef BCM283X_DSI_HVS
+#error "S1 must not reset or occupy an active DSI HVS"
+#endif
+/* Diagnostic implementation derived from the ordered hardware sequence in
+ * redox-rpi/rpi-open-firmware a4f24c913bfb7405a564109c8c1f68e97b49143b,
+ * bootcode/hdmi.c (GPL-2.0-or-later). This file's adaptations are likewise
+ * offered under GPL-2.0-or-later for this experimental profile.
+ * LK starts PLLH earlier, and its stage-2 startup is not Redox's selector.
+ * This opt-in profile programs PLLC_PER to 500 MHz during early LK startup;
+ * it changes a shared clock and must not be used as production firmware. */
+static void s1_marker(const char *s) {
+  puts(s);
+  uart_flush_tx(0);
+}
+
+static bool s1_pllh(void) {
+  s1_marker("S1: PLLH start (1485 MHz; PIX /1)");
+  *REG32(A2W_XOSC_CTRL) |= A2W_PASSWORD | A2W_XOSC_CTRL_HDMIEN_SET;
+  *REG32(CM_PLLH) = CM_PASSWORD | CM_PLL_ANARST_SET | CM_PLLH_DIGRST_SET;
+  *REG32(A2W_PLLH_CTRL) = A2W_PASSWORD | A2W_PLL_CTRL_PWRDN;
+  *REG32(A2W_PLLH_ANA3) = A2W_PASSWORD;
+  *REG32(A2W_PLLH_ANA2) = A2W_PASSWORD;
+  *REG32(A2W_PLLH_ANA1) = A2W_PASSWORD | 0x0c;
+  *REG32(A2W_PLLH_ANA0) = A2W_PASSWORD | 0x900000;
+  *REG32(A2W_PLLH_FRAC) = A2W_PASSWORD | 0x58000;
+  *REG32(A2W_PLLH_CTRL) = A2W_PASSWORD | A2W_PLL_CTRL_PWRDN | 0x104d;
+  *REG32(A2W_PLLH_CTRL) = A2W_PASSWORD | 0x104d;
+  *REG32(CM_PLLH) = CM_PASSWORD | CM_PLLH_DIGRST_SET;
+  *REG32(CM_PLLH) = CM_PASSWORD;
+  for (unsigned i = 0; i < 10000; ++i) {
+    if (*REG32(CM_LOCK) & (1u << CM_LOCK_FLOCKH_BIT)) goto locked;
+    udelay(1);
+  }
+  puts("S1: PLLH lock timeout");
+  return false;
+locked:
+  *REG32(A2W_PLLH_CTRL) = A2W_PASSWORD | 0x104d | A2W_PLL_CTRL_PRSTN;
+  *REG32(A2W_PLLH_PIX) = A2W_PASSWORD | 1;
+  /* HSM uses PLLC_PER; preserve the inherited AUX state. */
+  *REG32(CM_PLLH) = CM_PASSWORD | CM_PLLH_LOADPIX;
+  *REG32(CM_PLLH) = CM_PASSWORD;
+  return true;
+}
+
+static void s1_background_init(void) {
+  s1_marker("S1: 1080p60 DVI colour bars, ARM held");
+  s1_marker("S1: LK 0a00cdfffce83387a22a7aa0c044ce4b90e5f4cc; experimental uncommitted profile");
+  s1_marker("S1: HVS colour-bar plane");
+  /* Match Redox's channel-1 background path; this target excludes DSI. */
+  if (!(*REG32(SCALER_DISPCTRL) & SCALER_DISPCTRL_ENABLE))
+    *REG32(SCALER_DISPCTRL) = 0x9a0c0000u;
+  /* Reuse the reference diagnostic's static RGBA8888 colour bars. */
+  hdmi_fb = (uint32_t *)(uintptr_t)(BCM_SDRAM_BUS_ADDR_BASE_NO_L2 |
+                                    HDMI_FB_PRIMARY_PHYS);
+  hdmi_active = HDMI_FB_PRIMARY_PHYS;
+  hdmi_fill_test_pattern();
+  dlist_memory[16] = CONTROL_VALID | CONTROL_WORDS(7) |
+      CONTROL_PIXEL_ORDER(HVS_PIXEL_ORDER_ABGR) | CONTROL_UNITY |
+      CONTROL_FORMAT(HVS_PIXEL_FORMAT_RGBA8888);
+  dlist_memory[17] = POS0_X(0) | POS0_Y(0) | POS0_ALPHA(0xff);
+  dlist_memory[18] = POS2_H(HDMI_MODE_VACTIVE) | POS2_W(HDMI_MODE_HACTIVE);
+  dlist_memory[19] = 0xc0c0c0c0u;
+  dlist_memory[20] = 0xc0000000u | HDMI_FB_PRIMARY_PHYS;
+  dlist_memory[21] = 0xc0c0c0c0u;
+  dlist_memory[22] = HDMI_FB_STRIDE_BYTES;
+  dlist_memory[23] = 0x80000000u;
+  hvs_channels[1].dispbase = 0x3c8f0800u;
+  *REG32(SCALER_DISPLIST1) = 16;
+  hvs_channels[1].dispctrl = SCALER_DISPCTRLX_RESET;
+  hvs_channels[1].dispctrl = 0;
+  hvs_channels[1].dispbkgnd = SCALER_DISPBKGND_FILL | 0x00ff8000u;
+  hvs_channels[1].dispctrl = SCALER_DISPCTRLX_ENABLE | (1920u << 12) | 1080u;
+
+  s1_marker("S1: IMAGE and HDMI power prerequisites");
+  /* Keep the proven LK USB/IMAGE prerequisite as an explicit adaptation. */
+  power_up_usb();
+  hdmi_enable_power_domain();
+  s1_marker("S1: A2W HDMI CTL3..0");
+  *REG32(A2W_HDMI_CTL3) = PM_PASSWORD | 0x000040;
+  *REG32(A2W_HDMI_CTL2) = PM_PASSWORD | 0x18008e;
+  *REG32(A2W_HDMI_CTL1) = PM_PASSWORD | 0x011c00;
+  *REG32(A2W_HDMI_CTL0) = PM_PASSWORD | 0x470238;
+  if (!s1_pllh()) return;
+  s1_marker("S1: HSM PLLC_PER target 163682864 Hz (divider 0x30e0)");
+  if (freq_pllc_per != 500000000u) {
+    puts("S1: PLLC_PER is not 500 MHz; refusing HSM setup");
+    return;
+  }
+  if (!clock_set_hsm(163682864, PERI_PLLC_PER)) {
+    puts("S1: HSM setup failed");
+    return;
+  }
+  for (unsigned i = 0; i < 10000; ++i) {
+    if (*REG32(CM_HSMCTL) & CM_HSMCTL_BUSY_SET) goto hsm_ready;
+    udelay(1);
+  }
+  puts("S1: HSM busy timeout");
+  return;
+hsm_ready:
+  printf("S1: HSMCTL=0x%08x HSMDIV=0x%08x\n",
+         *REG32(CM_HSMCTL), *REG32(CM_HSMDIV));
+  if (*REG32(CM_HSMDIV) != 0x30e0u) {
+    puts("S1: unexpected HSM divider");
+    return;
+  }
+  s1_marker("S1: before HD M_CTL read 0x7e80800c");
+  uint32_t hd_ctl = *REG32(HD_HDM_CTL);
+  printf("S1: HD M_CTL=0x%08x\n", hd_ctl);
+  s1_marker("S1: before HDMI CORE_REV read 0x7e902000");
+  uint32_t revision = *REG32(HDMI_CORE_REV);
+  printf("S1: HDMI CORE_REV=0x%08x\n", revision);
+  uart_flush_tx(0);
+  s1_marker("S1: encoder/core/PHY reset");
+  *REG32(HD_HDM_CTL) = 4;
+  udelay(1);
+  *REG32(HD_HDM_CTL) = 0;
+  *REG32(HD_HDM_CTL) = 0x201;
+  *REG32(HDMI_SW_RESET_CNTRL) = 3;
+  *REG32(HDMI_SW_RESET_CNTRL) = 0;
+  s1_marker("S1: before PHY reset assert 0x7e9022c0");
+  *REG32(HDMI_TX_PHY_RESET_CTL) = 0x000f0000;
+  *REG32(HDMI_TX_PHY_RESET_CTL) = 0;
+  s1_marker("S1: HDMI timings and video disabled");
+  s1_marker("S1: before scheduler timing read 0x7e9020c0");
+  uint32_t scheduler = *REG32(HDMI_SCHEDULER_CONTROL);
+  *REG32(HDMI_SCHEDULER_CONTROL) = scheduler | 0x00008020u;
+  *REG32(HDMI_HORZA) = 0x00006780;
+  *REG32(HDMI_HORZB) = 0x0940b058;
+  *REG32(HDMI_VERTA0) = 0x00508438;
+  *REG32(HDMI_VERTB0) = 0x00000024;
+  *REG32(HDMI_VERTA1) = 0x00508438;
+  *REG32(HDMI_VERTB1) = 0x00000024;
+  *REG32(HDMI_MISC_CONTROL) = 0;
+  *REG32(HDMI_VID_CTL) = 0;
+  *REG32(HDMI_CSC_CTL) = HDMI_CSC_CTL_ORDER_BGR;
+  s1_marker("S1: FIFO master and PV2 setup");
+  *REG32(HDMI_FIFO_CTL) = 1;
+  /* Known writes, without unqualified reads of the potentially stalled PV. */
+  s1_marker("S1: before PV2 control zero 0x7e807000");
+  *REG32(0x7e807000) = 0;
+  s1_marker("S1: before PV2 FIFO clear 0x7e807000");
+  *REG32(0x7e807000) = 3;
+  s1_marker("S1: before PV2 control reset 0x7e807000");
+  *REG32(0x7e807000) = 0;
+  *REG32(0x7e80700c) = 0x0094002c;
+  *REG32(0x7e807010) = 0x00580780;
+  *REG32(0x7e807014) = 0x00240005;
+  *REG32(0x7e807018) = 0x00040438;
+  s1_marker("S1: before PV2 video control 0x7e807004");
+  *REG32(0x7e807004) = 2;
+  s1_marker("S1: before PV2 control setup 0x7e807000");
+  *REG32(0x7e807000) = 0x00177004;
+  s1_marker("S1: before PV2 control enable 0x7e807000");
+  *REG32(0x7e807000) = 0x00177005;
+  s1_marker("S1: video, DVI and FIFO recenter");
+  *REG32(HDMI_VID_CTL) = HD_VID_CTL_ENABLE | HD_VID_CTL_UFEN |
+      HD_VID_CTL_RST_FRAMEC | HD_VID_CTL_CLRRGB | HD_VID_CTL_BLANK_INSERT_EN;
+  s1_marker("S1: before video control read 0x7e808038");
+  *REG32(HDMI_VID_CTL) = *REG32(HDMI_VID_CTL) & ~HD_VID_CTL_BLANKPIX;
+  s1_marker("S1: before PV2 video read 0x7e807004");
+  *REG32(0x7e807004) = *REG32(0x7e807004) | 1u;
+  *REG32(HDMI_RAM_PACKET_CONFIG) = 0;
+  s1_marker("S1: before scheduler DVI read 0x7e9020c0");
+  *REG32(HDMI_SCHEDULER_CONTROL) = *REG32(HDMI_SCHEDULER_CONTROL) & ~1u;
+  s1_marker("S1: before scheduler DVI polling 0x7e9020c0");
+  bool dvi_ready = false;
+  for (unsigned i = 0; i < 100000; ++i) {
+    if (!(*REG32(HDMI_SCHEDULER_CONTROL) & 2u)) {
+      dvi_ready = true;
+      break;
+    }
+    udelay(1);
+  }
+  if (!dvi_ready) {
+    puts("S1: DVI scheduler timeout");
+    return;
+  }
+  s1_marker("S1: before FIFO read 0x7e90205c");
+  uint32_t fifo = *REG32(HDMI_FIFO_CTL) & 0xefffu;
+  *REG32(HDMI_FIFO_CTL) = fifo & ~VC4_HDMI_FIFO_CTL_RECENTER;
+  *REG32(HDMI_FIFO_CTL) = fifo | VC4_HDMI_FIFO_CTL_RECENTER;
+  udelay(1000);
+  *REG32(HDMI_FIFO_CTL) = fifo & ~VC4_HDMI_FIFO_CTL_RECENTER;
+  *REG32(HDMI_FIFO_CTL) = fifo | VC4_HDMI_FIFO_CTL_RECENTER;
+  s1_marker("S1: before FIFO recenter polling 0x7e90205c");
+  bool recentered = false;
+  for (unsigned i = 0; i < 100000; ++i) {
+    if (*REG32(HDMI_FIFO_CTL) & VC4_HDMI_FIFO_CTL_RECENTER_DONE) {
+      recentered = true;
+      break;
+    }
+    udelay(1);
+  }
+  if (!recentered) {
+    puts("S1: FIFO recenter timeout");
+    return;
+  }
+  s1_marker("S1: before PHY powerdown read 0x7e9022c4");
+  *REG32(0x7e9022c4) = *REG32(0x7e9022c4) & ~(1u << 25);
+  hdmi_ready = true;
+  puts("S1: transmitter programmed; physical display not yet verified");
+  uart_flush_tx(0);
+}
+#endif
+
+#line 321 "platform/bcm28xx/vc4-hdmi/hdmi.c"
 static void hdmi_init(uint level) {
+#if HDMI_DIAG_REDOX_BACKGROUND
+  s1_background_init();
+  return;
+#endif
+#line 322 "platform/bcm28xx/vc4-hdmi/hdmi.c"
   /* Match the historical HDMI prerequisite sequence.  The USB/peripheral
    * domain is required before the HDMI clock/bus path is touched. */
   power_up_usb();
