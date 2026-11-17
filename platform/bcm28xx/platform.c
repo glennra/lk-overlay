@@ -490,7 +490,9 @@ void platform_early_init(void) {
       //setup_plla(1000 * 1000 * 1000, 10, 10);
       setup_plla(PLLA_FREQ_MHZ * 1000 * 1000, PLLA_CORE_DIV, PLLA_PER_DIV);
 #if defined(BCM283X_HDMI)
-#if HDMI_MODE_720P60
+#if HDMI_MODE_1280X800
+      setup_pllh(1500 * 1000 * 1000, 2, 1);
+#elif HDMI_MODE_720P60
       /* Keep PLLH at 1485 MHz; PIX /2 yields 74.25 MHz after the fixed /10. */
       setup_pllh(1485 * 1000 * 1000, 2, 1);
 #elif HDMI_MODE_1080P60

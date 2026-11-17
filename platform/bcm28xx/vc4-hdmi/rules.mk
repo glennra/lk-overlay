@@ -10,4 +10,8 @@ MODULES += \
 MODULE_SRCS += \
 	$(LOCAL_DIR)/hdmi.c \
 
+ifeq ($(HDMI_EDID_DIAGNOSTIC),1)
+MODULE_SRCS += $(LOCAL_DIR)/ddc.c $(LOCAL_DIR)/edid.c $(LOCAL_DIR)/discovery.c
+endif
+
 include make/module.mk

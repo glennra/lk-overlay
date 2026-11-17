@@ -1,10 +1,8 @@
 #include "ddc.h"
 
 #include <platform/bcm28xx/i2c.h>
-#include <platform/bcm28xx/arm.h>
 #include <platform/bcm28xx/cm.h>
 #include <platform/bcm28xx/udelay.h>
-#include <dev/gpio.h>
 #include <dev/uart.h>
 #include <lk/reg.h>
 #include <stdio.h>
@@ -13,14 +11,6 @@
 #define HDMI_DDC_RATE 100000u
 #define HDMI_DDC_TIMEOUT_US 20000u
 #define HDMI_DDC_PERIPHERAL_CLOCK_HZ 250000000u
-#define HDMI_HPD_FIRMWARE_GPIO 4u
-#define HDMI_PROPERTY_CHANNEL 8u
-#define HDMI_MAILBOX_TIMEOUT_US 500000u
-#define HDMI_MAILBOX_EMPTY 0x40000000u
-#define HDMI_MAILBOX_FULL 0x80000000u
-#define HDMI_MAILBOX_STATUS ((uintptr_t)(ARM0_MAILBOX_BASE + 0x18))
-#define HDMI_MAILBOX_READ ((uintptr_t)(ARM0_MAILBOX_BASE + 0x00))
-#define HDMI_MAILBOX_WRITE ((uintptr_t)(ARM0_MAILBOX_BASE + 0x20))
 
 struct bsc_regs {
   volatile uint32_t control;
@@ -48,7 +38,9 @@ struct bsc_regs {
 static void hdmi_ddc_enable_peri_image_clock(void) {
   static bool enabled;
   if (enabled) return;
+#if !(HDMI_AUTO_MODE && HDMI_AUTO_QUIET)
   puts("HDMI DDC: enabling PERI_IMAGE clock");
+#endif
   *REG32(CM_PERIIDIV) = CM_PASSWORD | 0x1000;
   *REG32(CM_PERIICTL) |= CM_PASSWORD | 0x40;
   *REG32(CM_PERIICTL) = (*REG32(CM_PERIICTL) & 0xffffffbf) | CM_PASSWORD;
@@ -126,81 +118,92 @@ static int wait_status(struct bsc_regs *regs, uint32_t mask) {
 }
 
 static void clear_bsc(struct bsc_regs *regs) {
+#if !(HDMI_AUTO_MODE && HDMI_AUTO_QUIET)
   puts("HDMI DDC: clearing BSC status");
+#endif
   regs->status = BSC_S_CLKT | BSC_S_ERR | BSC_S_DONE;
+#if !(HDMI_AUTO_MODE && HDMI_AUTO_QUIET)
   puts("HDMI DDC: BSC status cleared");
+#endif
   /* CLEAR is issued with I2CEN disabled, matching the BCM2835 driver. */
   regs->control = BSC_C_CLEAR;
+#if !(HDMI_AUTO_MODE && HDMI_AUTO_QUIET)
   puts("HDMI DDC: BSC clear command written");
+#endif
 }
 
-static int hdmi_property_call(uint32_t *message) {
-  for (unsigned elapsed = 0; elapsed < HDMI_MAILBOX_TIMEOUT_US; ++elapsed) {
-    if ((*REG32(HDMI_MAILBOX_STATUS) & HDMI_MAILBOX_FULL) == 0) break;
-    udelay(1);
-    if (elapsed + 1 == HDMI_MAILBOX_TIMEOUT_US) return -1;
-  }
-  *REG32(HDMI_MAILBOX_WRITE) =
-      ((uint32_t)((uintptr_t)message & 0x3fffffff) + BCM_SDRAM_BUS_ADDR_BASE) |
-      HDMI_PROPERTY_CHANNEL;
-
-  for (unsigned elapsed = 0; elapsed < HDMI_MAILBOX_TIMEOUT_US; ++elapsed) {
-    if ((*REG32(HDMI_MAILBOX_STATUS) & HDMI_MAILBOX_EMPTY) == 0) {
-      uint32_t reply = *REG32(HDMI_MAILBOX_READ);
-      if ((reply & 0xf) == HDMI_PROPERTY_CHANNEL) return 0;
-    }
-    udelay(1);
-  }
-  return -1;
-}
-
-/* Pi 3 exposes HDMI HPD through the firmware GPIO controller (expgpio line
- * 4), not through a BCM2837 GPIO pin.  Query the stock firmware property
- * interface rather than sampling an unrelated physical GPIO. */
-static int hdmi_hpd_firmware_gpio(void) {
-  static uint32_t message[7] __ALIGNED(16);
-  message[0] = sizeof(message);
-  message[1] = 0;
-  message[2] = 0x00030041; /* GET_GPIO_STATE */
-  message[3] = 4;
-  message[4] = 0;
-  message[5] = HDMI_HPD_FIRMWARE_GPIO;
-  message[6] = 0;
-
-  if (hdmi_property_call(message) != 0) return -1;
-  if (message[1] != 0x80000000 ||
-      (message[4] & 0x80000000) == 0) return -1;
-  return (message[5] & 1) ? 1 : 0;
-}
-
-static int ddc_write_offset(struct bsc_regs *regs) {
+static int ddc_write_offset(struct bsc_regs *regs, uint8_t offset) {
   uint32_t divider = HDMI_DDC_PERIPHERAL_CLOCK_HZ / HDMI_DDC_RATE;
   if (!divider || divider > 0xffffu) divider = 0xffffu;
+#if !(HDMI_AUTO_MODE && HDMI_AUTO_QUIET)
   puts("HDMI DDC: programming divider and address");
+#endif
   regs->clock_divider = divider;
   regs->data_delay = ((divider / 16u) << 16) | (divider / 4u);
   regs->clock_stretch_timeout = 0;
   regs->slave_address = HDMI_DDC_ADDR;
   regs->data_length = 1;
+#if HDMI_DDC_PREFILL
+#if !HDMI_DDC_MARKER_COMPACT
+  puts("HDMI DDC PREFILL: before controller enable");
+  uart_flush_tx(0);
+#endif
+  regs->control = BSC_C_ENABLE;
+  puts("HDMI DDC PREFILL: before FIFO write");
+  uart_flush_tx(0);
+  regs->fifo = offset;
+#if !HDMI_DDC_MARKER_COMPACT
+  puts("HDMI DDC PREFILL: before START");
+  uart_flush_tx(0);
+#endif
+#endif
+#if !(HDMI_AUTO_MODE && HDMI_AUTO_QUIET)
   puts("HDMI DDC: starting offset write");
+#endif
   regs->control = BSC_C_ENABLE | BSC_C_START;
+#if HDMI_DDC_PREFILL
+  puts("HDMI DDC PREFILL: before DONE status wait");
+  uart_flush_tx(0);
+#endif
+#if !HDMI_DDC_PREFILL
   puts("HDMI DDC: waiting for TXD");
+  uart_flush_tx(0);
   if (wait_status(regs, BSC_S_TXD | BSC_S_ERR | BSC_S_CLKT)) {
     puts("HDMI DDC: TXD wait failed");
     return -1;
   }
+  uint32_t status = regs->status;
+  if (status & (BSC_S_ERR | BSC_S_CLKT)) {
+    printf("HDMI DDC: offset write status error 0x%08x\n", status);
+    return -1;
+  }
+#if !(HDMI_AUTO_MODE && HDMI_AUTO_QUIET)
   puts("HDMI DDC: TXD ready");
-  if (regs->status & (BSC_S_ERR | BSC_S_CLKT)) return -1;
-  regs->fifo = 0;
+#endif
+  regs->fifo = offset;
+#endif
+#if !(HDMI_AUTO_MODE && HDMI_AUTO_QUIET)
   puts("HDMI DDC: offset byte written; waiting for DONE");
-  if (wait_status(regs, BSC_S_DONE | BSC_S_ERR | BSC_S_CLKT)) return -1;
+#endif
+  if (wait_status(regs, BSC_S_DONE | BSC_S_ERR | BSC_S_CLKT)) {
+    puts("HDMI DDC: offset write DONE timeout");
+    return -1;
+  }
+  uint32_t completion_status = regs->status;
+  if (completion_status & (BSC_S_ERR | BSC_S_CLKT)) {
+    printf("HDMI DDC: offset write completion error 0x%08x\n", completion_status);
+    return -1;
+  }
+#if !(HDMI_AUTO_MODE && HDMI_AUTO_QUIET)
   puts("HDMI DDC: offset write DONE");
-  if (regs->status & (BSC_S_ERR | BSC_S_CLKT)) return -1;
+#endif
   return 0;
 }
 
 static int ddc_read_block(struct bsc_regs *regs, uint8_t *out) {
   regs->data_length = 128;
+  puts("HDMI DDC: starting block read; before status");
+  uart_flush_tx(0);
   regs->control = BSC_C_ENABLE | BSC_C_START | BSC_C_READ;
   unsigned remaining = 128;
   for (unsigned elapsed = 0; elapsed < HDMI_DDC_TIMEOUT_US && remaining;
@@ -222,36 +225,53 @@ static int ddc_read_block(struct bsc_regs *regs, uint8_t *out) {
 int hdmi_ddc_read_edid(uint8_t *buffer, size_t length) {
   if (!buffer || length < 128) return -1;
 
-  /* Do not start a BSC2 transaction when no sink has asserted HPD: the
-   * peripheral can leave the VPU stalled on the first status read after
-   * START in that state. */
-  int hpd_n = hdmi_hpd_firmware_gpio();
-  printf("HDMI DDC: firmware HPD_N expgpio4=%d\n", hpd_n);
-  if (hpd_n < 0) {
-    puts("HDMI DDC: firmware HPD query failed; skipping BSC2 transaction");
-    return -3;
-  }
-  if (hpd_n != 0) {
-    puts("HDMI DDC: HPD not asserted; skipping BSC2 transaction");
-    return -2;
-  }
-
+  /* Explicit diagnostic: the caller must connect a sink before invoking it. */
+#if HDMI_DDC_PREFILL
+  puts("HDMI DDC PREFILL: before PERI_IMAGE clock");
+  uart_flush_tx(0);
+#endif
   hdmi_ddc_enable_peri_image_clock();
   /* BSC2 is the dedicated HDMI DDC controller; no GPIO pinmux is needed. */
+#if !(HDMI_AUTO_MODE && HDMI_AUTO_QUIET)
   puts("HDMI DDC: using dedicated BSC2 pins");
+#endif
   struct bsc_regs *regs = BSC2;
+#if !(HDMI_AUTO_MODE && HDMI_AUTO_QUIET)
   puts("HDMI DDC: BSC2 pointer ready");
+#endif
   for (unsigned attempt = 0; attempt < 3; ++attempt) {
+#if !(HDMI_AUTO_MODE && HDMI_AUTO_QUIET)
     printf("HDMI DDC: attempt %u enabling BSC2\n", attempt + 1);
+#endif
+#if HDMI_DDC_PREFILL
+#if !HDMI_DDC_MARKER_COMPACT
+    puts("HDMI DDC PREFILL: before clear/configure");
+    uart_flush_tx(0);
+#endif
+#endif
     regs->control = 0;
     clear_bsc(regs);
-    if (ddc_write_offset(regs) == 0 && ddc_read_block(regs, buffer) == 0) {
+    if (ddc_write_offset(regs, 0) == 0 && ddc_read_block(regs, buffer) == 0) {
       clear_bsc(regs);
+      if (buffer[126]) {
+        if (length < 256 || buffer[126] > 1 ||
+            ddc_write_offset(regs, 128) != 0 ||
+            ddc_read_block(regs, buffer + 128) != 0) {
+          clear_bsc(regs);
+          regs->control = 0;
+          return -4;
+        }
+        clear_bsc(regs);
+      }
       regs->control = 0;
       return 0;
     }
     clear_bsc(regs);
-    udelay(100);
+    regs->control = 0;
+    if (attempt + 1 < 3) {
+      puts("HDMI DDC: retrying after 10 ms");
+      udelay(10000);
+    }
   }
   regs->control = 0;
   return -1;

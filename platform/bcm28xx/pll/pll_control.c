@@ -14,6 +14,19 @@
 #include <fixed-point/util.h>
 
 #define PLL_MAX_LOCKWAIT 1000
+#if HDMI_PLL_SNAPSHOT_QUIET || STAGE1_PLL_SNAPSHOT_QUIET
+#define pll_snapshot(ctrl, frac) do { (void)*REG32(ctrl); (void)*REG32(frac); } while (0)
+#define pll_frac_snapshot(frac_reg, expected) do { (void)*REG32(frac_reg); } while (0)
+#else
+#define pll_snapshot(ctrl, frac) printf("ctrl: 0x%x\nfrac: 0x%x\n", *REG32(ctrl), *REG32(frac))
+#define pll_frac_snapshot(frac_reg, expected) printf("frac set to 0x%x, wanted 0x%x\n", *REG32(frac_reg), expected)
+#endif
+
+#if STAGE1_PLL_QUIET || HDMI_PLL_QUIET
+#define pll_progress(...) do { } while (0)
+#else
+#define pll_progress(...) printf(__VA_ARGS__)
+#endif
 
 static int cmd_set_pll_freq(int argc, const console_cmd_args *argv);
 
@@ -547,11 +560,11 @@ void switch_vpu_to_src(int src) {
 // linux source says PLLC has a range of 600mhz to 3ghz
 // above 1.75ghz, the pre-div should be enabled
 void setup_pllc(uint32_t target_freq, int core0_div, int per_div) {
-  printf("bringing PLLC up at %dMHz\n", target_freq/1000/1000);
+  pll_progress("bringing PLLC up at %dMHz\n", target_freq/1000/1000);
   int pdiv = 1;
   bool prediv = true;
   uint32_t xtal_in = xtal_freq;
-  printf("xtal_in = %u\n", xtal_in);
+  pll_progress("xtal_in = %u\n", xtal_in);
   uint64_t goal_freq = target_freq;
 
   // if over 1.75ghz, enable an extra /2 stage
@@ -559,13 +572,13 @@ void setup_pllc(uint32_t target_freq, int core0_div, int per_div) {
 
   uint32_t other_division = computePllDivisor(xtal_in/1000, goal_freq/1000);
 
-  printf("goal_freq = %llu\n", goal_freq);
+  pll_progress("goal_freq = %llu\n", goal_freq);
   //uint32_t divisor = (goal_freq<<20) / xtal_in;
   uint32_t divisor = other_division;
   int div = divisor >> 20;
   int frac = divisor & 0xfffff;
-  printf("divisor 0x%x -> %d+(%d/2^20)\n", divisor, div, frac);
-  printf("other divisor: 0x%x\n", other_division);
+  pll_progress("divisor 0x%x -> %d+(%d/2^20)\n", divisor, div, frac);
+  pll_progress("other divisor: 0x%x\n", other_division);
   //printf("ctrl: 0x%x\nfrac: 0x%x\n", *REG32(A2W_PLLC_CTRL), *REG32(A2W_PLLC_FRAC));
 
   assert(other_division == divisor);
@@ -639,11 +652,11 @@ void setup_pllc(uint32_t target_freq, int core0_div, int per_div) {
 // linux source says PLLC has a range of 600mhz to 2.4ghz
 // above 1.75ghz, the pre-div should be enabled
 void setup_plla(uint32_t target_freq, int core_div, int per_div) {
-  printf("bringing PLLA up at %dMHz\n", target_freq/1000/1000);
+  pll_progress("bringing PLLA up at %dMHz\n", target_freq/1000/1000);
   int pdiv = 1;
   bool prediv = false;
   uint32_t xtal_in = xtal_freq;
-  printf("xtal_in = %u\n", xtal_in);
+  pll_progress("xtal_in = %u\n", xtal_in);
   uint64_t goal_freq = target_freq;
 
   // if over 1.75ghz, enable an extra /2 stage
@@ -651,13 +664,13 @@ void setup_plla(uint32_t target_freq, int core_div, int per_div) {
 
   uint32_t other_division = computePllDivisor(xtal_in/1000, goal_freq/1000);
 
-  printf("goal_freq = %llu\n", goal_freq);
+  pll_progress("goal_freq = %llu\n", goal_freq);
   //uint32_t divisor = (goal_freq<<20) / xtal_in;
   uint32_t divisor = other_division;
   int div = divisor >> 20;
   int frac = divisor & 0xfffff;
-  printf("divisor 0x%x -> %d+(%d/2^20)\n", divisor, div, frac);
-  //printf("ctrl: 0x%x\nfrac: 0x%x\n", *REG32(A2W_PLLA_CTRL), *REG32(A2W_PLLA_FRAC));
+  pll_progress("divisor 0x%x -> %d+(%d/2^20)\n", divisor, div, frac);
+  //pll_snapshot(A2W_PLLA_CTRL, A2W_PLLA_FRAC);
 
   const bool core_enable = false;
   const bool per_enable = true;
@@ -713,12 +726,12 @@ void setup_plla(uint32_t target_freq, int core_div, int per_div) {
   *REG32(CM_PLLA) = CM_PASSWORD | CM_PLLA_DIGRST |
             CM_PLLA_HOLDDSI0 | CM_PLLA_HOLDCCP2 | holdflags;
 
-  printf("ctrl: 0x%x\nfrac: 0x%x\n", *REG32(A2W_PLLA_CTRL), *REG32(A2W_PLLA_FRAC));
+  pll_snapshot(A2W_PLLA_CTRL, A2W_PLLA_FRAC);
   puts("waiting for lock");
   while (!BIT_SET(*REG32(CM_LOCK), CM_LOCK_FLOCKA_BIT)) {}
-  printf("ctrl: 0x%x\nfrac: 0x%x\n", *REG32(A2W_PLLA_CTRL), *REG32(A2W_PLLA_FRAC));
+  pll_snapshot(A2W_PLLA_CTRL, A2W_PLLA_FRAC);
   *REG32(A2W_PLLA_FRAC) = A2W_PASSWORD | frac;
-  printf("ctrl: 0x%x\nfrac: 0x%x\n", *REG32(A2W_PLLA_CTRL), *REG32(A2W_PLLA_FRAC));
+  pll_snapshot(A2W_PLLA_CTRL, A2W_PLLA_FRAC);
 
   freq_plla_core = target_freq / core_div;
   freq_plla_per = target_freq / per_div;
@@ -726,20 +739,20 @@ void setup_plla(uint32_t target_freq, int core_div, int per_div) {
 }
 
 void setup_pllh(uint32_t target_freq, int aux_div, int pix_div) {
-  printf("bringing PLLH up at %dMHz\n", target_freq/1000/1000);
+  pll_progress("bringing PLLH up at %dMHz\n", target_freq/1000/1000);
 
   hdmi_enable_power_domain();
 
   int pdiv = 1;
   uint32_t xtal_in = xtal_freq;
-  printf("xtal_in = %u\n", xtal_in);
+  pll_progress("xtal_in = %u\n", xtal_in);
   uint64_t goal_freq = target_freq;
-  printf("goal_freq = %llu\n", goal_freq);
+  pll_progress("goal_freq = %llu\n", goal_freq);
   uint32_t divisor = (goal_freq<<20) / xtal_in;
   int div = divisor >> 20;
   int frac = divisor & 0xfffff;
-  printf("divisor 0x%x -> %d+(%d/2^20)\n", divisor, div, frac);
-  printf("ctrl: 0x%x\nfrac: 0x%x\n", *REG32(A2W_PLLH_CTRL), *REG32(A2W_PLLH_FRAC));
+  pll_progress("divisor 0x%x -> %d+(%d/2^20)\n", divisor, div, frac);
+  pll_snapshot(A2W_PLLH_CTRL, A2W_PLLH_FRAC);
 
   *REG32(CM_PLLH) = CM_PASSWORD | CM_PLL_ANARST_SET;
 
@@ -747,8 +760,8 @@ void setup_pllh(uint32_t target_freq, int aux_div, int pix_div) {
 
   *REG32(A2W_PLLH_FRAC) = A2W_PASSWORD | frac;
   *REG32(A2W_PLLH_CTRL) = A2W_PASSWORD | div | PDIV(pdiv);
-  printf("ctrl: 0x%x\nfrac: 0x%x\n", *REG32(A2W_PLLH_CTRL), *REG32(A2W_PLLH_FRAC));
-  printf("frac set to 0x%x, wanted 0x%x\n", *REG32(A2W_PLLH_FRAC), frac);
+  pll_snapshot(A2W_PLLH_CTRL, A2W_PLLH_FRAC);
+  pll_frac_snapshot(A2W_PLLH_FRAC, frac);
 
   *REG32(A2W_PLLH_ANA3) = A2W_PASSWORD | 0x0;
   *REG32(A2W_PLLH_ANA2) = A2W_PASSWORD | 0x0;
@@ -786,9 +799,9 @@ void setup_pllh(uint32_t target_freq, int aux_div, int pix_div) {
 
   puts("waiting for lock");
   while (!BIT_SET(*REG32(CM_LOCK), CM_LOCK_FLOCKH_BIT)) {}
-  printf("ctrl: 0x%x\nfrac: 0x%x\n", *REG32(A2W_PLLH_CTRL), *REG32(A2W_PLLH_FRAC));
+  pll_snapshot(A2W_PLLH_CTRL, A2W_PLLH_FRAC);
   *REG32(A2W_PLLH_FRAC) = A2W_PASSWORD | frac;
-  printf("ctrl: 0x%x\nfrac: 0x%x\n", *REG32(A2W_PLLH_CTRL), *REG32(A2W_PLLH_FRAC));
+  pll_snapshot(A2W_PLLH_CTRL, A2W_PLLH_FRAC);
 
   freq_pllh_aux = target_freq / aux_div;
 }

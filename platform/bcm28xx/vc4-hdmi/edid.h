@@ -16,6 +16,7 @@ struct hdmi_edid_mode {
   uint8_t vic;
   uint8_t aspect;
   bool interlaced;
+  bool sync_separate, hsync_positive, vsync_positive;
   bool hdmi_signalling;
 };
 
@@ -37,3 +38,6 @@ int hdmi_edid_parse(const uint8_t *edid, size_t length,
                     struct hdmi_edid_info *info);
 const struct hdmi_edid_mode *hdmi_edid_select(
     const struct hdmi_edid_info *info, const struct hdmi_mode_caps *caps);
+
+/* Restricted automatic diagnostic modes, matched on exact timings. */
+int hdmi_edid_auto_profile(const struct hdmi_edid_info *info);

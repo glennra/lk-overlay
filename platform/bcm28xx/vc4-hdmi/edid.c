@@ -21,7 +21,13 @@ static void add_mode(struct hdmi_edid_info *info,
     const struct hdmi_edid_mode *old = &info->modes[i];
     if (old->width == mode->width && old->height == mode->height &&
         old->pixel_clock_hz == mode->pixel_clock_hz &&
-        old->interlaced == mode->interlaced)
+        old->interlaced == mode->interlaced &&
+        old->hfp == mode->hfp && old->hsync == mode->hsync &&
+        old->hbp == mode->hbp && old->vfp == mode->vfp &&
+        old->vsync == mode->vsync && old->vbp == mode->vbp &&
+        old->sync_separate == mode->sync_separate &&
+        old->hsync_positive == mode->hsync_positive &&
+        old->vsync_positive == mode->vsync_positive)
       return;
   }
   info->modes[info->mode_count++] = *mode;
@@ -41,8 +47,8 @@ static void add_dtd(struct hdmi_edid_info *info, const uint8_t *dtd,
   uint16_t vblank = dtd[6] | ((dtd[7] & 0x0f) << 8);
   uint16_t hstart = dtd[8] | ((dtd[11] & 0xc0) << 2);
   uint16_t hwidth = dtd[9] | ((dtd[11] & 0x30) << 4);
-  uint16_t vstart = dtd[10] | ((dtd[11] & 0x0c) << 2);
-  uint16_t vwidth = dtd[10 + 1] | ((dtd[11] & 0x03) << 8);
+  uint16_t vstart = (dtd[10] >> 4) | ((dtd[11] & 0x0c) << 2);
+  uint16_t vwidth = (dtd[10] & 0x0f) | ((dtd[11] & 0x03) << 4);
   if (hstart > hblank || hwidth > hblank - hstart ||
       vstart > vblank || vwidth > vblank - vstart)
     return;
@@ -53,6 +59,9 @@ static void add_dtd(struct hdmi_edid_info *info, const uint8_t *dtd,
   mode.vsync = vwidth;
   mode.vbp = vblank - vstart - vwidth;
   mode.interlaced = (dtd[17] & 0x80) != 0;
+  mode.sync_separate = (dtd[17] & 0x18) == 0x18;
+  mode.hsync_positive = (dtd[17] & 2) != 0;
+  mode.vsync_positive = (dtd[17] & 4) != 0;
   mode.hdmi_signalling = hdmi_signalling;
   mode.refresh_millihz = refresh_millihz(&mode);
   add_mode(info, &mode);
@@ -63,6 +72,9 @@ static void add_vic(struct hdmi_edid_info *info, uint8_t vic) {
   memset(&mode, 0, sizeof(mode));
   mode.vic = vic & 0x7f;
   mode.hdmi_signalling = info->hdmi_signalling;
+  mode.sync_separate = true;
+  mode.hsync_positive = true;
+  mode.vsync_positive = true;
   switch (mode.vic) {
     case 16: /* 1080p60 */
       mode.width = 1920; mode.height = 1080; mode.pixel_clock_hz = 148500000;
@@ -85,11 +97,13 @@ static void add_vic(struct hdmi_edid_info *info, uint8_t vic) {
       mode.vfp = 5; mode.vsync = 5; mode.vbp = 20; mode.aspect = 16;
       break;
     case 2: /* 480p60 4:3 */
+      mode.hsync_positive = mode.vsync_positive = false;
       mode.width = 720; mode.height = 480; mode.pixel_clock_hz = 27000000;
       mode.hfp = 16; mode.hsync = 62; mode.hbp = 60;
       mode.vfp = 9; mode.vsync = 6; mode.vbp = 30; mode.aspect = 4;
       break;
     case 3: /* 480p60 16:9 */
+      mode.hsync_positive = mode.vsync_positive = false;
       mode.width = 720; mode.height = 480; mode.pixel_clock_hz = 27000000;
       mode.hfp = 16; mode.hsync = 62; mode.hbp = 60;
       mode.vfp = 9; mode.vsync = 6; mode.vbp = 30; mode.aspect = 16;
@@ -174,6 +188,29 @@ const struct hdmi_edid_mode *hdmi_edid_select(
     if (!best || t < best_tier || (t == best_tier && r < best_refresh)) {
       best = m; best_tier = t; best_refresh = r;
     }
+  }
+  return best;
+}
+
+int hdmi_edid_auto_profile(const struct hdmi_edid_info *info) {
+  if (!info) return 0;
+  int best = 0;
+  for (size_t i = 0; i < info->mode_count; ++i) {
+    const struct hdmi_edid_mode *m = &info->modes[i];
+    if (m->interlaced || !m->sync_separate || !m->hsync_positive) continue;
+    if (m->width == 1920 && m->height == 1080 && m->pixel_clock_hz == 148500000 &&
+        m->hfp == 88 && m->hsync == 44 && m->hbp == 148 &&
+        m->vfp == 4 && m->vsync == 5 && m->vbp == 36 && m->vsync_positive)
+      return 1;
+    if (m->width == 1280 && m->height == 800 && m->pixel_clock_hz == 75000000 &&
+        m->hfp == 64 && m->hsync == 48 && m->hbp == 124 &&
+        m->vfp == 5 && m->vsync == 7 && m->vbp == 12 && !m->vsync_positive)
+      best = 2;
+    else if (best == 0 && m->width == 1280 && m->height == 720 &&
+        m->pixel_clock_hz == 74250000 && m->hfp == 110 && m->hsync == 40 &&
+        m->hbp == 220 && m->vfp == 5 && m->vsync == 5 && m->vbp == 20 &&
+        m->vsync_positive)
+      best = 3;
   }
   return best;
 }

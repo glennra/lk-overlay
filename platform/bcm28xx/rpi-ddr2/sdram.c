@@ -77,7 +77,11 @@ uint32_t dram_clock;
 
 #define PVT_calibrate_request 0x1
 
-#define logf(fmt, ...) print_timestamp(); printf("[SDRAM:%s]: " fmt, __FUNCTION__, ##__VA_ARGS__);
+#if STAGE1_SDRAM_QUIET
+#define logf(fmt, ...) do { } while (0)
+#else
+#define logf(fmt, ...) do { print_timestamp(); printf("[SDRAM:%s]: " fmt, __FUNCTION__, ##__VA_ARGS__); } while (0)
+#endif
 
 static const char* lpddr2_manufacturer_name(uint32_t mr) {
   switch (mr) {
@@ -468,7 +472,7 @@ static void init_late(void) {
 
 #define RT_ASSERT(i_, expected) \
 	if (ram[(i_)] != expected) { \
-		logf("ERROR: At 0x%p, was expecting 0x%X from read, got 0x%X instead!\n", \
+		printf("SDRAM ERROR: At 0x%p, was expecting 0x%X from read, got 0x%X instead!\n", \
 			&ram[(i_)], \
 			expected, \
 			ram[(i_)]); \

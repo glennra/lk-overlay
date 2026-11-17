@@ -56,6 +56,54 @@ int main(void) {
     assert(info.modes[0].pixel_clock_hz == 148500000);
   }
 
+  /* 1280x720 CTA timing as a detailed timing descriptor. */
+  base(edid, 0);
+  {
+    const uint8_t dtd[18] = { 0x01, 0x1d, 0x00, 0x72, 0x51, 0xd0,
+      0x1e, 0x20, 0x6e, 0x28, 0x55, 0x00, 0, 0, 0, 0, 0, 0x1e };
+    memcpy(edid + 54, dtd, sizeof(dtd));
+    checksum(edid);
+    assert(hdmi_edid_parse(edid, 128, &info) == 0);
+    assert(info.modes[0].width == 1280 && info.modes[0].height == 720);
+    assert(info.modes[0].vfp == 5 && info.modes[0].vsync == 5);
+    assert(info.modes[0].vbp == 20 && info.modes[0].refresh_millihz == 60000);
+  }
+
+  /* Captured LG Full HD preferred 1080p DTD. */
+  base(edid, 0);
+  {
+    const uint8_t dtd[18] = {0x02,0x3a,0x80,0x18,0x71,0x38,0x2d,0x40,
+      0x58,0x2c,0x45,0x00,0xe0,0x0e,0x11,0,0,0x1e};
+    memcpy(edid + 54, dtd, sizeof(dtd)); checksum(edid);
+    assert(hdmi_edid_parse(edid, 128, &info) == 0);
+    assert(hdmi_edid_auto_profile(&info) == 1);
+  }
+
+  /* Captured 1280x800 panel DTD: negative vertical, positive horizontal. */
+  base(edid, 0);
+  {
+    const uint8_t dtd[18] = {0x4c,0x1d,0x00,0xec,0x50,0x20,0x18,0x30,
+      0x40,0x30,0x57,0x00,0xd9,0x88,0,0,0,0x1b};
+    memcpy(edid + 54, dtd, sizeof(dtd)); checksum(edid);
+    assert(hdmi_edid_parse(edid, 128, &info) == 0);
+    assert(hdmi_edid_auto_profile(&info) == 2);
+    assert(info.modes[0].hsync_positive && !info.modes[0].vsync_positive);
+    edid[54+17] = 0x1f; checksum(edid);
+    assert(hdmi_edid_parse(edid, 128, &info) == 0);
+    assert(hdmi_edid_auto_profile(&info) == 0);
+  }
+  base(edid, 1); cta_vics(edid + 128, all, sizeof(all));
+  assert(hdmi_edid_parse(edid, 256, &info) == 0);
+  assert(hdmi_edid_auto_profile(&info) == 1);
+  base(edid, 1); cta_vics(edid + 128, all + 1, 1);
+  assert(hdmi_edid_parse(edid, 256, &info) == 0);
+  assert(hdmi_edid_auto_profile(&info) == 3);
+  {
+    const uint8_t unsupported[] = {31};
+    base(edid, 1); cta_vics(edid + 128, unsupported, 1);
+    assert(hdmi_edid_parse(edid, 256, &info) == 0);
+    assert(hdmi_edid_auto_profile(&info) == 0);
+  }
   edid[127] ^= 1;
   assert(hdmi_edid_parse(edid, sizeof(edid), &info) == -3);
   base(edid, 0);

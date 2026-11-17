@@ -7,6 +7,9 @@
 #include <platform/bcm28xx.h>
 #include <platform/bcm28xx/clock.h>
 #include <platform/bcm28xx/pll.h>
+#if STAGE1_SD_QUIET
+#include <platform/bcm28xx/print_timestamp.h>
+#endif
 #include <platform/bcm28xx/udelay.h>
 #include <stdint.h>
 #include <string.h>
@@ -59,6 +62,9 @@ void arch_idle(void) {
 }
 
 void arch_chain_load(void *entry, ulong arg0, ulong arg1, ulong arg2, ulong arg3) {
+#if STAGE1_SD_QUIET
+  print_timestamp();
+#endif
   puts("flushing uart tx and chainloading...\n");
   uart_flush_tx(0);
   __asm__ volatile ("mov r0, %0\nmov r1, %1\nmov r2, %2\nmov r3, %3\nbl %4":
