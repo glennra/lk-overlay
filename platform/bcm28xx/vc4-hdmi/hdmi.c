@@ -15,6 +15,13 @@
 #include <platform/bcm28xx/hdmi_framebuffer.h>
 #include <stdlib.h>
 
+#if HDMI_MODE_720P60 && HDMI_MODE_1080P60
+#error "Select only one HDMI mode"
+#endif
+#if HDMI_MODE_720P60 && (!HDMI_DIAG_REDOX_BACKGROUND || !HDMI_DIAG_DVI)
+#error "720p60 currently requires the Redox DVI diagnostic"
+#endif
+
 #if HDMI_DIAG_DVI && HDMI_MODE_1080P60 && !HDMI_DIAG_REDOX_BACKGROUND
 #error "HDMI_DIAG_DVI is limited to the 640x480 diagnostic"
 #endif
@@ -99,7 +106,21 @@
 #define A2W_HDMI_CTL2 0x7e102088
 #define A2W_HDMI_CTL3 0x7e10208c
 
-#if HDMI_MODE_1080P60
+#if HDMI_MODE_720P60
+#define HDMI_MODE_HACTIVE 1280
+#define HDMI_MODE_VACTIVE 720
+#define HDMI_MODE_PIXEL_CLOCK_HZ 74250000
+#define HDMI_MODE_HSM_CLOCK_HZ 163682864
+#define HDMI_EXPECTED_HSM_DIV  0x30e0u
+#define HDMI_EXPECTED_PIX_DIV  2u
+#define HDMI_MODE_HFP 110
+#define HDMI_MODE_HSYNC 40
+#define HDMI_MODE_HBP 220
+#define HDMI_MODE_VFP 5
+#define HDMI_MODE_VSYNC 5
+#define HDMI_MODE_VBP 20
+#define HDMI_MODE_SYNC_POSITIVE 1
+#elif HDMI_MODE_1080P60
 #define HDMI_MODE_HACTIVE 1920
 #define HDMI_MODE_VACTIVE 1080
 #define HDMI_MODE_PIXEL_CLOCK_HZ 148500000
@@ -319,8 +340,8 @@ static void hdmi_prepare_scanout(void) {
 }
 
 #if HDMI_DIAG_REDOX_BACKGROUND
-#if !HDMI_MODE_1080P60 || !HDMI_DIAG_DVI || !HDMI_HOLD_ARM_BOOT
-#error "S1 requires 1080p, DVI signalling and ARM boot hold"
+#if !(HDMI_MODE_1080P60 || HDMI_MODE_720P60) || !HDMI_DIAG_DVI || !HDMI_HOLD_ARM_BOOT
+#error "S1 requires 720p or 1080p, DVI signalling and ARM boot hold"
 #endif
 #ifdef BCM283X_DSI_HVS
 #error "S1 must not reset or occupy an active DSI HVS"
@@ -338,7 +359,11 @@ static void s1_marker(const char *s) {
 }
 
 static bool s1_pllh(void) {
+#if HDMI_MODE_720P60
+  s1_marker("S1: PLLH start (1485 MHz; PIX /2)");
+#else
   s1_marker("S1: PLLH start (1485 MHz; PIX /1)");
+#endif
   *REG32(A2W_XOSC_CTRL) |= A2W_PASSWORD | A2W_XOSC_CTRL_HDMIEN_SET;
   *REG32(CM_PLLH) = CM_PASSWORD | CM_PLL_ANARST_SET | CM_PLLH_DIGRST_SET;
   *REG32(A2W_PLLH_CTRL) = A2W_PASSWORD | A2W_PLL_CTRL_PWRDN;
@@ -359,7 +384,7 @@ static bool s1_pllh(void) {
   return false;
 locked:
   *REG32(A2W_PLLH_CTRL) = A2W_PASSWORD | 0x104d | A2W_PLL_CTRL_PRSTN;
-  *REG32(A2W_PLLH_PIX) = A2W_PASSWORD | 1;
+  *REG32(A2W_PLLH_PIX) = A2W_PASSWORD | HDMI_EXPECTED_PIX_DIV;
   /* HSM uses PLLC_PER; preserve the inherited AUX state. */
   *REG32(CM_PLLH) = CM_PASSWORD | CM_PLLH_LOADPIX;
   *REG32(CM_PLLH) = CM_PASSWORD;
@@ -367,8 +392,16 @@ locked:
 }
 
 static void s1_background_init(void) {
+#if HDMI_MODE_720P60
+  s1_marker("S1: 720p60 DVI colour bars, ARM held");
+#else
   s1_marker("S1: 1080p60 DVI colour bars, ARM held");
+#endif
+#if HDMI_MODE_720P60
+  s1_marker("S1: experimental 720p60 profile");
+#else
   s1_marker("S1: LK 0a00cdfffce83387a22a7aa0c044ce4b90e5f4cc; experimental uncommitted profile");
+#endif
   s1_marker("S1: HVS colour-bar plane");
   /* Match Redox's channel-1 background path; this target excludes DSI. */
   if (!(*REG32(SCALER_DISPCTRL) & SCALER_DISPCTRL_ENABLE))
@@ -393,7 +426,8 @@ static void s1_background_init(void) {
   hvs_channels[1].dispctrl = SCALER_DISPCTRLX_RESET;
   hvs_channels[1].dispctrl = 0;
   hvs_channels[1].dispbkgnd = SCALER_DISPBKGND_FILL | 0x00ff8000u;
-  hvs_channels[1].dispctrl = SCALER_DISPCTRLX_ENABLE | (1920u << 12) | 1080u;
+  hvs_channels[1].dispctrl = SCALER_DISPCTRLX_ENABLE |
+      (HDMI_MODE_HACTIVE << 12) | HDMI_MODE_VACTIVE;
 
   s1_marker("S1: IMAGE and HDMI power prerequisites");
   /* Keep the proven LK USB/IMAGE prerequisite as an explicit adaptation. */
@@ -448,12 +482,16 @@ hsm_ready:
   s1_marker("S1: before scheduler timing read 0x7e9020c0");
   uint32_t scheduler = *REG32(HDMI_SCHEDULER_CONTROL);
   *REG32(HDMI_SCHEDULER_CONTROL) = scheduler | 0x00008020u;
-  *REG32(HDMI_HORZA) = 0x00006780;
-  *REG32(HDMI_HORZB) = 0x0940b058;
-  *REG32(HDMI_VERTA0) = 0x00508438;
-  *REG32(HDMI_VERTB0) = 0x00000024;
-  *REG32(HDMI_VERTA1) = 0x00508438;
-  *REG32(HDMI_VERTB1) = 0x00000024;
+  *REG32(HDMI_HORZA) = VC4_HDMI_HORZA_VPOS | VC4_HDMI_HORZA_HPOS |
+      HDMI_MODE_HACTIVE;
+  *REG32(HDMI_HORZB) = (HDMI_MODE_HBP << 20) |
+      (HDMI_MODE_HSYNC << 10) | HDMI_MODE_HFP;
+  *REG32(HDMI_VERTA0) = (HDMI_MODE_VSYNC << 20) |
+      (HDMI_MODE_VFP << 13) | HDMI_MODE_VACTIVE;
+  *REG32(HDMI_VERTB0) = HDMI_MODE_VBP;
+  *REG32(HDMI_VERTA1) = (HDMI_MODE_VSYNC << 20) |
+      (HDMI_MODE_VFP << 13) | HDMI_MODE_VACTIVE;
+  *REG32(HDMI_VERTB1) = HDMI_MODE_VBP;
   *REG32(HDMI_MISC_CONTROL) = 0;
   *REG32(HDMI_VID_CTL) = 0;
   *REG32(HDMI_CSC_CTL) = HDMI_CSC_CTL_ORDER_BGR;
@@ -466,10 +504,10 @@ hsm_ready:
   *REG32(0x7e807000) = 3;
   s1_marker("S1: before PV2 control reset 0x7e807000");
   *REG32(0x7e807000) = 0;
-  *REG32(0x7e80700c) = 0x0094002c;
-  *REG32(0x7e807010) = 0x00580780;
-  *REG32(0x7e807014) = 0x00240005;
-  *REG32(0x7e807018) = 0x00040438;
+  *REG32(0x7e80700c) = (HDMI_MODE_HBP << 16) | HDMI_MODE_HSYNC;
+  *REG32(0x7e807010) = (HDMI_MODE_HFP << 16) | HDMI_MODE_HACTIVE;
+  *REG32(0x7e807014) = (HDMI_MODE_VBP << 16) | HDMI_MODE_VSYNC;
+  *REG32(0x7e807018) = (HDMI_MODE_VFP << 16) | HDMI_MODE_VACTIVE;
   s1_marker("S1: before PV2 video control 0x7e807004");
   *REG32(0x7e807004) = 2;
   s1_marker("S1: before PV2 control setup 0x7e807000");
