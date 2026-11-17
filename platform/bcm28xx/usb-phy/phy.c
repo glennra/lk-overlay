@@ -6,6 +6,7 @@
  */
 
 #include <kernel/thread.h>
+#include <dev/uart.h>
 #include <lk/console_cmd.h>
 #include <lk/init.h>
 #include <lk/reg.h>
@@ -36,6 +37,10 @@ static void wait(void) {
 void write_bare(int reg, uint16_t value, int type) {
   reg &= 0x1F;
 
+#if DSI_USB_PHY_PREFLIGHT
+  printf("USB PHY: before MDIO reg=0x%02x type=0x%08x\n", reg, type);
+  uart_flush_tx(0);
+#endif
   /* precede MDIO access */
   *REG32(USB_GMDIOGEN) = 0xFFFFFFFF;
   wait();
@@ -134,9 +139,18 @@ STATIC_COMMAND_END(usbphy);
 static void usbphy_init(uint level) {
   int devmode = 0;
 
+#if DSI_USB_PHY_PREFLIGHT
+  puts("USB PHY: before power setup");
+  uart_flush_tx(0);
+#endif
   power_up_usb();
 
+#if DSI_USB_PHY_PREFLIGHT
+  puts("USB PHY: power setup returned; before PHY MMIO");
+  uart_flush_tx(0);
+#else
   puts("bringing up usb PHY...");
+#endif
 
   *REG32(USB_GMDIOCSR) = BV(18);
 

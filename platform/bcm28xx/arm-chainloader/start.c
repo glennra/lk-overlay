@@ -79,6 +79,11 @@ static void __attribute__((optimize("-O1"))) arm_chainloader_init(uint level) {
     return;
   }
   printf("ARM: payload=%u bytes framebuffer=0x%08x uart=%u Hz\n", payload_size, active, uart_hz);
+#if DSI_USB_POWER_PREFLIGHT && !BCM283X_HDMI
+  puts("DSI: before IMAGE/USB power setup");
+  power_up_usb();
+  puts("DSI: IMAGE/USB power setup returned");
+#endif
   prepare_usb_host(revision);
   *REG32(ARM_CONTROL0) |= ARM_C0_BRESP2 | ARM_C0_SIZ1G | ARM_C0_APROTPASS |
                           ARM_C0_APROTMSK | ARM_C0_FULLPERI |
@@ -96,7 +101,13 @@ static void __attribute__((optimize("-O1"))) arm_chainloader_init(uint level) {
 #if BCM283X_HDMI
   bcm_hdmi_run_boot_animation();
 #else
+#if DSI_STATIC_HANDOFF
+  puts("DSI: static scanout retained after ARM release");
+  for (;;)
+    __asm__ volatile("nop");
+#else
   bcm_dsi7_run_boot_animation();
+#endif
 #endif
 }
 LK_INIT_HOOK(arm_chainloader, &arm_chainloader_init, LK_INIT_LEVEL_PLATFORM + 10);
