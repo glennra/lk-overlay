@@ -1,5 +1,6 @@
 #include <lk/console_cmd.h>
 #include <lk/reg.h>
+#include <dev/uart.h>
 #include <platform/bcm28xx/cm.h>
 #include <platform/bcm28xx/pll.h>
 #include <platform/bcm28xx/power.h>
@@ -22,6 +23,58 @@ STATIC_COMMAND("pm_usb_on", "enable usb power domain", &cmd_pm_usb_on)
 STATIC_COMMAND_END(pm);
 
 #ifdef ARCH_VPU
+#if WO052_IMAGE_TWO_STAGE && !VPU_STAGE2
+/* Run only at stage-1 cold startup, before LK enables HDMI or SDRAM. */
+static int wo052_wait_image(uint32_t mask, bool set) {
+  for (unsigned int i = 0; i < 10000; ++i) {
+    if (!!(*REG32(PM_IMAGE) & mask) == set) return 0;
+    udelay(1);
+  }
+  return -1;
+}
+
+int wo052_image_two_stage(void) {
+  uint32_t state = *REG32(PM_IMAGE);
+  printf("WO052 IMAGE: entry stage=1 power_state=0x%08x\n", state);
+  uart_flush_tx(0);
+  /* Never cycle a domain that the ROM or an earlier owner left powered. */
+  if (state & (PM_POWUP | PM_POWOK)) {
+    puts("WO052 IMAGE: already powered; refusing cycle");
+    uart_flush_tx(0);
+    return -1;
+  }
+  uint32_t pm = (state & 0x00fcffffu) | PM_PASSWORD | 0x00010000u;
+  *REG32(PM_IMAGE) = pm;
+  *REG32(PM_IMAGE) = pm | PM_POWUP;
+  if (wo052_wait_image(PM_POWOK, true)) return -1;
+  puts("WO052 IMAGE: CFG1 power-up complete"); uart_flush_tx(0);
+
+  *REG32(PM_IMAGE) = pm;
+  if (wo052_wait_image(PM_POWOK, false)) return -1;
+  puts("WO052 IMAGE: power-down complete"); uart_flush_tx(0);
+
+  pm = (pm & ~0x00030000u) | 0x00030000u | PM_POWUP;
+  *REG32(PM_IMAGE) = pm;
+  if (wo052_wait_image(PM_POWOK, true)) return -1;
+  puts("WO052 IMAGE: CFG3 power-up complete"); uart_flush_tx(0);
+
+  pm |= PM_ISPOW; *REG32(PM_IMAGE) = pm;
+  pm |= PM_MEMREP; *REG32(PM_IMAGE) = pm;
+  if (wo052_wait_image(PM_MRDONE, true)) return -1;
+  pm |= PM_ISFUNC; *REG32(PM_IMAGE) = pm;
+  puts("WO052 IMAGE: isolation/repair complete"); uart_flush_tx(0);
+
+  /* Linux's 32-clock reset propagation delay; no v16mov reset window. */
+  *REG32(CM_PERIICTL) = CM_PASSWORD | (*REG32(CM_PERIICTL) | 0x40u);
+  udelay(1);
+  *REG32(CM_PERIICTL) = CM_PASSWORD | (*REG32(CM_PERIICTL) & ~0x40u);
+  udelay(1);
+  pm |= PM_IMAGE_PERIRSTN_SET; *REG32(PM_IMAGE) = pm;
+  *REG32(CM_PERIICTL) = CM_PASSWORD | (*REG32(CM_PERIICTL) | 0x40u);
+  puts("WO052 IMAGE: PERII gate/reset release complete"); uart_flush_tx(0);
+  return 0;
+}
+#endif
 void hdmi_enable_power_domain(void) {
   static bool domain_enabled = false;
   if (domain_enabled) return;

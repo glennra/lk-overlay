@@ -9,6 +9,7 @@
 #define FB_BACK_PHYS HDMI_FB_BACK_PHYS
 #define FB_WIDTH HDMI_FB_WIDTH
 #define FB_HEIGHT HDMI_FB_HEIGHT
+int bcm_hdmi_framebuffer_dimensions(uint32_t *width, uint32_t *height);
 #else
 #include <platform/bcm28xx/dsi_framebuffer.h>
 #define FB_POOL_BASE DSI_FB_POOL_BASE
@@ -32,6 +33,16 @@ int arm_chainloader_write_firmware_data(volatile uint32_t *data, uint32_t serial
                 active_framebuffer != FB_BACK_PHYS))
     return -1;
 
+  uint32_t width = FB_WIDTH, height = FB_HEIGHT;
+#if BCM283X_HDMI
+  if (bcm_hdmi_framebuffer_dimensions(&width, &height) ||
+      !((width == 1920 && height == 1080) ||
+        (width == 1280 && (height == 800 || height == 720)) ||
+        (width == 640 && height == 480)) ||
+      (uint64_t)width * height * 4u > FB_BACK_PHYS - FB_PRIMARY_PHYS)
+    return -1;
+#endif
+
   /* Matches firmware_arm_data_t and reserved indices in rpi-open-firmware. */
   data[0] = 0; /* kRamSize1GB */
   data[1] = 0; /* VPU CPUID is diagnostic only */
@@ -44,9 +55,9 @@ int arm_chainloader_write_firmware_data(volatile uint32_t *data, uint32_t serial
   data[8] = FB_PRIMARY_PHYS;
   data[9] = FB_BACK_PHYS;
   data[10] = active_framebuffer;
-  data[11] = FB_WIDTH;
-  data[12] = FB_HEIGHT;
-  data[13] = FB_WIDTH; /* stride in pixels, not bytes */
+  data[11] = width;
+  data[12] = height;
+  data[13] = width; /* stride in pixels, not bytes */
   data[14] = ARM_CHAINLOADER_FORMAT_A8R8G8B8;
   return 0;
 }

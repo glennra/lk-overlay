@@ -419,8 +419,8 @@ static void hdmi_prepare_scanout(void) {
 }
 
 #if HDMI_DIAG_REDOX_BACKGROUND
-#if !(HDMI_MODE_1080P60 || HDMI_MODE_720P60 || HDMI_MODE_1280X800) || !HDMI_DIAG_DVI || !HDMI_HOLD_ARM_BOOT
-#error "S1 requires 720p or 1080p, DVI signalling and ARM boot hold"
+#if !(HDMI_MODE_1080P60 || HDMI_MODE_720P60 || HDMI_MODE_1280X800) || !HDMI_DIAG_DVI
+#error "S1 requires a supported mode and DVI diagnostic"
 #endif
 #ifdef BCM283X_DSI_HVS
 #error "S1 must not reset or occupy an active DSI HVS"
@@ -1066,6 +1066,24 @@ int bcm_hdmi_framebuffer_handoff(uint32_t *physical) {
   return 0;
 }
 
+int bcm_hdmi_framebuffer_dimensions(uint32_t *width, uint32_t *height) {
+  if (!width || !height || !hdmi_ready)
+    return -1;
+#if HDMI_AUTO_MODE || HDMI_DIAG_REDOX_BACKGROUND
+  *width = S1_HACTIVE;
+  *height = S1_VACTIVE;
+#else
+  *width = HDMI_MODE_HACTIVE;
+  *height = HDMI_MODE_VACTIVE;
+#endif
+  return 0;
+}
+
 void bcm_hdmi_run_boot_animation(void) {
   /* Static test pattern is intentional for Milestone A. */
+#if !HDMI_HOLD_ARM_BOOT
+  puts("HDMI: static scanout retained after ARM release");
+  for (;;)
+    __asm__ volatile("nop");
+#endif
 }

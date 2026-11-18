@@ -449,6 +449,24 @@ void platform_early_init(void) {
 
     logf("c\n");
 
+#if WO052_IMAGE_TWO_STAGE && ARCH_VPU && !VPU_STAGE2
+    /* Run only on the Pi 3B+, before this stage starts PLLH or SDRAM. */
+    uint32_t wo052_revision = otp_read(30);
+    if ((wo052_revision & (1u << 23)) &&
+        ((wo052_revision >> 4) & 0xffu) == 0x0du) {
+      if (!(*REG32(PM_RSTS) & PM_RSTS_HADPOR_SET)) {
+        puts("WO052 IMAGE: not a power-on reset; stage1 stopped");
+        uart_flush_tx(0);
+        for (;;) __asm__ volatile("nop");
+      }
+      if (wo052_image_two_stage()) {
+        puts("WO052 IMAGE: startup failed; stage1 stopped");
+        uart_flush_tx(0);
+        for (;;) __asm__ volatile("nop");
+      }
+    }
+#endif
+
 #ifdef ARCH_VPU
     uint32_t rsts = *REG32(PM_RSTS);
     uint8_t partition = decode_rsts(rsts);

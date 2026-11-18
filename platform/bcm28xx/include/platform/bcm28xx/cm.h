@@ -115,6 +115,7 @@
 
 #define CM_SRC_OSC                    1
 #define CM_SRC_PLLC_CORE0             5
+#define CM_SRC_PLLC_PER               5
 #define CM_SRC_PLLC_CORE1             8
 #define CM_SRC_PLLC_CORE2             9
 
