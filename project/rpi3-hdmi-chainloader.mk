@@ -6,7 +6,7 @@ MODULES += app/shell platform/bcm28xx/vc4-hdmi \
 
 BOOTCODE := 1
 VPU_STAGE2 := 1
-HDMI_HOLD_ARM_BOOT ?= 1
+HDMI_HOLD_ARM_BOOT ?= 0
 GLOBAL_DEFINES += BOOTCODE=1 VPU_STAGE2=1 BCM283X_PLLD_CONTROL=1 BCM283X_HDMI=1 HDMI_HOLD_ARM_BOOT=$(HDMI_HOLD_ARM_BOOT)
 HDMI_USB_PHY_PREFLIGHT ?= 0
 ifeq ($(HDMI_USB_PHY_PREFLIGHT),1)
@@ -19,16 +19,16 @@ HDMI_USB_PHY_WRITE_ONLY ?= 0
 GLOBAL_DEFINES += HDMI_USB_PHY_WRITE_ONLY=$(HDMI_USB_PHY_WRITE_ONLY)
 HDMI_USB_PHY_SKIP_17 ?= 0
 GLOBAL_DEFINES += HDMI_USB_PHY_SKIP_17=$(HDMI_USB_PHY_SKIP_17)
-WO051_MDIO_PRE_PREAMBLE ?= 0
-GLOBAL_DEFINES += WO051_MDIO_PRE_PREAMBLE=$(WO051_MDIO_PRE_PREAMBLE)
-WO051_USB_REFERENCE_CLOCK ?= 0
-GLOBAL_DEFINES += WO051_USB_REFERENCE_CLOCK=$(WO051_USB_REFERENCE_CLOCK)
-WO052_START_PLLD ?= 0
-GLOBAL_DEFINES += WO052_START_PLLD=$(WO052_START_PLLD)
-WO052_STOCK_GP1 ?= 0
-GLOBAL_DEFINES += WO052_STOCK_GP1=$(WO052_STOCK_GP1)
-WO052_LANRUN_FXL ?= 0
-GLOBAL_DEFINES += WO052_LANRUN_FXL=$(WO052_LANRUN_FXL)
+USB_PHY_MDIO_PRE_PREAMBLE ?= 0
+GLOBAL_DEFINES += USB_PHY_MDIO_PRE_PREAMBLE=$(USB_PHY_MDIO_PRE_PREAMBLE)
+USB_PHY_REFERENCE_CLOCK ?= 0
+GLOBAL_DEFINES += USB_PHY_REFERENCE_CLOCK=$(USB_PHY_REFERENCE_CLOCK)
+USB_PLLD_START ?= 0
+GLOBAL_DEFINES += USB_PLLD_START=$(USB_PLLD_START)
+USB_STOCK_GP1_CLOCK ?= 0
+GLOBAL_DEFINES += USB_STOCK_GP1_CLOCK=$(USB_STOCK_GP1_CLOCK)
+USB_LANRUN_EXPANDER ?= 0
+GLOBAL_DEFINES += USB_LANRUN_EXPANDER=$(USB_LANRUN_EXPANDER)
 DEBUG := 0
 BCM283X_HDMI := 1
 
@@ -48,18 +48,12 @@ GLOBAL_DEFINES += HDMI_DIAG_DVI=$(HDMI_DIAG_DVI)
 HDMI_EARLY_PV_PROBE ?= 0
 GLOBAL_DEFINES += HDMI_EARLY_PV_PROBE=$(HDMI_EARLY_PV_PROBE)
 
-# Optional Redox-sequence 1080p diagnostic; disabled by default.
-HDMI_DIAG_REDOX_BACKGROUND ?= 0
-GLOBAL_DEFINES += HDMI_DIAG_REDOX_BACKGROUND=$(HDMI_DIAG_REDOX_BACKGROUND)
-
-# Redox uses a 500 MHz PLLC_PER parent.  LK normally sets this tap to
-# 250 MHz.  Limit the altered shared clock to this diagnostic build.
-ifeq ($(HDMI_DIAG_REDOX_BACKGROUND),1)
-PLLC_PER_DIV := 1
-endif
+# Optional ordered-background 1080p diagnostic.
+HDMI_ORDERED_BACKGROUND ?= 0
+GLOBAL_DEFINES += HDMI_ORDERED_BACKGROUND=$(HDMI_ORDERED_BACKGROUND)
 
 # Opt-in DDC discovery command; transaction status reads have stalled hardware.
-HDMI_EDID_DIAGNOSTIC ?= 0
+HDMI_EDID_DIAGNOSTIC ?= 1
 GLOBAL_DEFINES += HDMI_EDID_DIAGNOSTIC=$(HDMI_EDID_DIAGNOSTIC)
 
 # Experimental 1280x800 HDMI signalling comparison, including AVI packet.
@@ -67,15 +61,25 @@ HDMI_DIAG_FORCE_HDMI ?= 0
 GLOBAL_DEFINES += HDMI_DIAG_FORCE_HDMI=$(HDMI_DIAG_FORCE_HDMI)
 
 # Experimental exact-EDID auto-selection; DDC MMIO may stall.
-HDMI_AUTO_MODE ?= 0
+HDMI_AUTO_MODE ?= 1
 GLOBAL_DEFINES += HDMI_AUTO_MODE=$(HDMI_AUTO_MODE)
 
-# Diagnostic comparison: use DVI on the 1280x800 auto profile.
-HDMI_AUTO_800_DVI ?= 0
+# The HDMI state-machine clock needs a parent above the requested 163.68 MHz
+# rate. With the normal 250 MHz PLLC_PER parent the divider would be below
+# the clock manager's minimum and preflight aborts before enabling HDMI.
+# Keep the 500 MHz parent for both ordered and automatic HDMI startup.
+ifneq ($(filter 1,$(HDMI_ORDERED_BACKGROUND) $(HDMI_AUTO_MODE)),)
+PLLC_PER_DIV := 1
+endif
+
+# If the EDID has no HDMI extension, use DVI on the 1280x800 profile.  A
+# native HDMI sink is selected only when EDID explicitly advertises HDMI.
+HDMI_AUTO_800_DVI ?= 1
 GLOBAL_DEFINES += HDMI_AUTO_800_DVI=$(HDMI_AUTO_800_DVI)
 
-# Experiment: preflight at 1280x800 and retain it if EDID matches.
-HDMI_AUTO_PREFLIGHT_800 ?= 0
+# Start automatic discovery at the known-compatible 1280x800 timing.  This
+# avoids touching the HDMI scheduler with an unsupported 1080p seed mode.
+HDMI_AUTO_PREFLIGHT_800 ?= 1
 GLOBAL_DEFINES += HDMI_AUTO_PREFLIGHT_800=$(HDMI_AUTO_PREFLIGHT_800)
 
 # Optional diagnostic delay before the initial automatic preflight signal.

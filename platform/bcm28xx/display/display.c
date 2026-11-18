@@ -84,7 +84,7 @@ static bool animation_sentinel_changed(gfx_surface *surface) {
 
 static void animation_commit_dlist(void) {
   /*
-   * WO-041 leaves VPU interrupts masked after ARM release, so pv_irq() cannot
+   * interrupt handoff leaves VPU interrupts masked after ARM release, so pv_irq() cannot
    * perform the normal VFP-start page flip.  Poll the same PixelValve event
    * that pv_irq() normally handles, then commit the already-built list while
    * the DSI output is in vertical blank.

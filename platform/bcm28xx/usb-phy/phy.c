@@ -29,9 +29,9 @@
 #define USB_GVBUSDRV  0x7e980088
 #define USB_HCFG 0x7e980400
 #define USB_HFIR 0x7e980404
-#define WO051_XOSC_USBEN (1u << 2)
-#define WO051_XOSC_USBOK (1u << 14)
-#define WO051_TDCLKEN_USBDFT (1u << 11)
+#define USB_PHY_XOSC_USBEN (1u << 2)
+#define USB_PHY_XOSC_USBOK (1u << 14)
+#define USB_PHY_TDCLKEN_USBDFT (1u << 11)
 
 #if HDMI_USB_PHY_PREFLIGHT
 static void usb_phy_power_snapshot(const char *name, uint32_t address) {
@@ -60,12 +60,12 @@ void write_bare(int reg, uint16_t value, int type) {
   uart_flush_tx(0);
 #endif
   /* precede MDIO access */
-#if WO051_MDIO_PRE_PREAMBLE && HDMI_USB_PHY_PREFLIGHT && !HDMI_USB_PHY_WRITE_ONLY
+#if USB_PHY_MDIO_PRE_PREAMBLE && HDMI_USB_PHY_PREFLIGHT && !HDMI_USB_PHY_WRITE_ONLY
   if (first_transaction) {
-    puts("WO052 USB: pre-preamble CSR read begin addr=0x7e980080");
+    puts("USB PHY: pre-preamble CSR read begin addr=0x7e980080");
     uart_flush_tx(0);
     uint32_t before = *REG32(USB_GMDIOCSR);
-    printf("WO052 USB: pre-preamble CSR read returned value=0x%08x\n", before);
+    printf("USB PHY: pre-preamble CSR read returned value=0x%08x\n", before);
     uart_flush_tx(0);
   }
 #endif
@@ -236,18 +236,18 @@ static void usbphy_init(uint level) {
   puts("USB PHY: write-only MDIO mode; status reads and busy polling disabled");
 #endif
 
-#if WO051_USB_REFERENCE_CLOCK
+#if USB_PHY_REFERENCE_CLOCK
   /* Reference PHY sequence: make the USB oscillator ready before MDIO. */
-  *REG32(A2W_XOSC_CTRL) |= A2W_PASSWORD | WO051_XOSC_USBEN;
+  *REG32(A2W_XOSC_CTRL) |= A2W_PASSWORD | USB_PHY_XOSC_USBEN;
   unsigned int clock_retries = 100000;
-  while (!(*REG32(A2W_XOSC_CTRL) & WO051_XOSC_USBOK) && --clock_retries)
+  while (!(*REG32(A2W_XOSC_CTRL) & USB_PHY_XOSC_USBOK) && --clock_retries)
     ;
   if (!clock_retries) {
-    puts("WO051 USB: oscillator not ready; PHY setup stopped");
+    puts("USB PHY: oscillator not ready; PHY setup stopped");
     return;
   }
-  *REG32(CM_TDCLKEN) |= CM_PASSWORD | WO051_TDCLKEN_USBDFT;
-  puts("WO051 USB: reference clock enabled; before MDIO");
+  *REG32(CM_TDCLKEN) |= CM_PASSWORD | USB_PHY_TDCLKEN_USBDFT;
+  puts("USB PHY: reference clock enabled; before MDIO");
   uart_flush_tx(0);
 #endif
 
@@ -271,7 +271,7 @@ static void usbphy_init(uint level) {
   uint16_t phy_ready_status;
 
   while(((phy_ready_status = usb_read(0x1B)) & (1 << 7)) != 0) { if (tries-- <= 0) break; }
-  printf("WO052 PHY: reg1b=0x%04x retries_left=%d %s\n", phy_ready_status,
+  printf("USB PHY: reg1b=0x%04x retries_left=%d %s\n", phy_ready_status,
          tries, tries < 0 ? "retry-limit" : "ready-bit-clear");
   uart_flush_tx(0);
 

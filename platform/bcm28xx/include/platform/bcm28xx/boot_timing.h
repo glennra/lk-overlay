@@ -2,7 +2,7 @@
 
 #include <stdint.h>
 
-/* Optional WO-042 startup trace. Set DSI_BOOT_TIMING=1 at build time. */
+/* Optional startup timing startup trace. Set DSI_BOOT_TIMING=1 at build time. */
 enum bcm_boot_timing_event_id {
   BCM_BOOT_T0_PLATFORM_INIT = 1,
   BCM_BOOT_T3_LK_ENTRY,

@@ -23,7 +23,7 @@ void bcm_hdmi_run_boot_animation(void);
 #include <platform/bcm28xx/udelay.h>
 #include <platform/bcm28xx/boot_timing.h>
 #include <stdio.h>
-#if WO052_LANRUN_FXL
+#if USB_LANRUN_EXPANDER
 #include "lanrun.h"
 #endif
 
@@ -40,21 +40,26 @@ static void prepare_usb_host(uint32_t revision) {
   if (ethclk_pin > 0) {
     *REG32(CM_GP1CTL) = CM_PASSWORD | CM_GPnCTL_KILL_SET;
     while (*REG32(CM_GP1CTL) & CM_GPnCTL_BUSY_SET) { }
-    /* GP1 is a peripheral clock: selector 5 uses PLLC_PER, not CORE0. */
+    /* HDMI's Pi 3B+ USB hub uses PLLC_PER.  Preserve the original DSI
+     * handoff clock source; changing it after scanout starts corrupts DSI. */
     uint32_t divisor = freq_pllc_per / (25000000 / 0x1000);
+#if BCM283X_HDMI
     uint32_t clock_ctl = (2 << CM_GPnCTL_MASH_LSB) | CM_SRC_PLLC_PER;
-#if WO052_STOCK_GP1
+#else
+    uint32_t clock_ctl = (2 << CM_GPnCTL_MASH_LSB) | CM_SRC_PLLC_CORE0;
+#endif
+#if USB_STOCK_GP1_CLOCK
     if (type == 0x0d) {
       uint32_t lock = *REG32(CM_LOCK);
-#if WO052_START_PLLD
+#if USB_PLLD_START
       uint32_t plld_ctrl = *REG32(A2W_PLLD_CTRL);
       uint32_t plld_per = *REG32(A2W_PLLD_PER);
-      printf("WO052 PLLD: guard lock=0x%08x ctrl=0x%08x per=0x%08x\n", lock, plld_ctrl, plld_per);
+      printf("USB PLLD: guard lock=0x%08x ctrl=0x%08x per=0x%08x\n", lock, plld_ctrl, plld_per);
       uart_flush_tx(0);
       if (!(lock & (1u << CM_LOCK_FLOCKD_BIT)) &&
           (plld_ctrl == 0 || plld_ctrl == A2W_PLL_CTRL_PWRDN) &&
           (plld_per == 0 || plld_per == (1u << A2W_PLLD_PER_CHENB_LSB))) {
-        puts("WO052 PLLD: inactive; starting 2 GHz PLL and /4 peripheral");
+        puts("USB PLLD: inactive; starting 2 GHz PLL and /4 peripheral");
         uart_flush_tx(0);
         int status = setup_plld(2000000000u, 4);
         if (!status) {
@@ -63,10 +68,10 @@ static void prepare_usb_host(uint32_t revision) {
           *REG32(CM_PLLD) = CM_PASSWORD | (cm & ~((1u << 6) | (1u << 7)));
         }
         lock = *REG32(CM_LOCK);
-        printf("WO052 PLLD: setup result=%d lock=0x%08x\n", status, lock);
+        printf("USB PLLD: setup result=%d lock=0x%08x\n", status, lock);
         uart_flush_tx(0);
       } else {
-        puts("WO052 PLLD: startup skipped; state not confirmed inactive");
+        puts("USB PLLD: startup skipped; state not confirmed inactive");
         uart_flush_tx(0);
       }
 #endif
@@ -75,9 +80,9 @@ static void prepare_usb_host(uint32_t revision) {
       if (rate >= 499000000u && rate <= 501000000u) {
         divisor = 0x14d55;
         clock_ctl = (1 << CM_GPnCTL_MASH_LSB) | PERI_PLLD_PER;
-        printf("WO052 GP1: stock clock selected PLLD_PER=%u divisor=0x%x\n", rate, divisor);
+        printf("USB GP1: stock clock selected PLLD_PER=%u divisor=0x%x\n", rate, divisor);
       } else {
-        printf("WO052 GP1: PLLD unavailable or unexpected rate=%u lock=0x%08x; retaining LK clock\n", rate, lock);
+        printf("USB GP1: PLLD unavailable or unexpected rate=%u lock=0x%08x; retaining LK clock\n", rate, lock);
       }
       uart_flush_tx(0);
     }
@@ -93,12 +98,12 @@ static void prepare_usb_host(uint32_t revision) {
     udelay(type == 0xd ? 10000 : 1000);
     gpio_set(lan_run, 1);
   }
-#if WO052_LANRUN_FXL
+#if USB_LANRUN_EXPANDER
   if (type == 0x0d) {
-    puts("WO052 LAN: FXL6408 line 3 setup begin");
+    puts("USB LAN: FXL6408 line 3 setup begin");
     uart_flush_tx(0);
-    int result = wo052_lanrun_start();
-    printf("WO052 LAN: FXL6408 line 3 setup result=%d\n", result);
+    int result = lanrun_expander_start();
+    printf("USB LAN: FXL6408 line 3 setup result=%d\n", result);
     uart_flush_tx(0);
   }
 #endif

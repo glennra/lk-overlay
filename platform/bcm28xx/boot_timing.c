@@ -70,10 +70,10 @@ void bcm_boot_timing_mark(uint32_t event_id) {
 
 void bcm_boot_timing_dump(void) {
 #if DSI_BOOT_TIMING
-  printf("WO042_TIMING magic=0x%08x count=%u clock=ST_CLO_US\n",
+  printf("BOOT_TIMING magic=0x%08x count=%u clock=ST_CLO_US\n",
          trace.magic, trace.count);
   for (uint32_t i = 0; i < trace.count; ++i)
-    printf("WO042_TIMING event=%u timestamp=%u\n",
+    printf("BOOT_TIMING event=%u timestamp=%u\n",
            trace.events[i].event_id, trace.events[i].timestamp);
 #endif
 }

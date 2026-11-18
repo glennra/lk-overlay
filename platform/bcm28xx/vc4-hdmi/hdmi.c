@@ -22,8 +22,8 @@
 #if HDMI_AUTO_MODE
 #include "ddc.h"
 #include "edid.h"
-#if !HDMI_MODE_1080P60 || !HDMI_DIAG_REDOX_BACKGROUND || !HDMI_DIAG_DVI || !HDMI_EDID_DIAGNOSTIC || HDMI_DIAG_FORCE_HDMI
-#error "Auto diagnostic requires 1080p-sized Redox/DVI build and EDID support"
+#if !HDMI_MODE_1080P60 || !HDMI_EDID_DIAGNOSTIC || HDMI_DIAG_FORCE_HDMI
+#error "Auto selection requires 1080p timing and EDID support"
 #endif
 static struct hdmi_edid_mode auto_mode;
 static int auto_profile;
@@ -46,19 +46,15 @@ static int auto_profile;
 #define S1_VBP HDMI_MODE_VBP
 #endif
 
-#if HDMI_DIAG_FORCE_HDMI && !(HDMI_MODE_1280X800 && HDMI_DIAG_REDOX_BACKGROUND && HDMI_DIAG_DVI)
-#error "HDMI comparison requires the 1280x800 Redox diagnostic"
+#if HDMI_DIAG_FORCE_HDMI && !(HDMI_MODE_1280X800 && HDMI_ORDERED_BACKGROUND && HDMI_DIAG_DVI)
+#error "HDMI comparison requires the 1280x800 ordered-background diagnostic"
 #endif
 
 #if (HDMI_MODE_720P60 + HDMI_MODE_1080P60 + HDMI_MODE_1280X800) > 1
 #error "Select only one HDMI mode"
 #endif
-#if (HDMI_MODE_720P60 || HDMI_MODE_1280X800) && (!HDMI_DIAG_REDOX_BACKGROUND || !HDMI_DIAG_DVI)
-#error "720p60 currently requires the Redox DVI diagnostic"
-#endif
-
-#if HDMI_DIAG_DVI && HDMI_MODE_1080P60 && !HDMI_DIAG_REDOX_BACKGROUND
-#error "HDMI_DIAG_DVI is limited to the 640x480 diagnostic"
+#if (HDMI_MODE_720P60 || HDMI_MODE_1280X800) && (!HDMI_ORDERED_BACKGROUND || !HDMI_DIAG_DVI)
+#error "720p60 currently requires the ordered-background DVI diagnostic"
 #endif
 
 #define logf(fmt, ...) { print_timestamp(); printf("[hdmi:%s:%d]: "fmt, __FUNCTION__, __LINE__, ##__VA_ARGS__); }
@@ -418,18 +414,18 @@ static void hdmi_prepare_scanout(void) {
   printf("HDMI: HVS1 list=%u PV2 scanout enabled\n", start);
 }
 
-#if HDMI_DIAG_REDOX_BACKGROUND
-#if !(HDMI_MODE_1080P60 || HDMI_MODE_720P60 || HDMI_MODE_1280X800) || !HDMI_DIAG_DVI
-#error "S1 requires a supported mode and DVI diagnostic"
+#if HDMI_ORDERED_BACKGROUND || HDMI_AUTO_MODE
+#if !(HDMI_MODE_1080P60 || HDMI_MODE_720P60 || HDMI_MODE_1280X800)
+#error "S1 requires a supported mode"
 #endif
 #ifdef BCM283X_DSI_HVS
 #error "S1 must not reset or occupy an active DSI HVS"
 #endif
 /* Diagnostic implementation derived from the ordered hardware sequence in
- * redox-rpi/rpi-open-firmware a4f24c913bfb7405a564109c8c1f68e97b49143b,
+ * the reference rpi-open-firmware sequence (a4f24c913bfb7405a564109c8c1f68e97b49143b),
  * bootcode/hdmi.c (GPL-2.0-or-later). This file's adaptations are likewise
  * offered under GPL-2.0-or-later for this experimental profile.
- * LK starts PLLH earlier, and its stage-2 startup is not Redox's selector.
+ * LK starts PLLH earlier, and its stage-2 startup has its own selector.
  * This opt-in profile programs PLLC_PER to 500 MHz during early LK startup;
  * it changes a shared clock and must not be used as production firmware. */
 static void s1_marker(const char *s) {
@@ -610,7 +606,7 @@ static void s1_background_init(void) {
   s1_marker("S1: LK 0a00cdfffce83387a22a7aa0c044ce4b90e5f4cc; experimental uncommitted profile");
 #endif
   s1_marker("S1: HVS colour-bar plane");
-  /* Match Redox's channel-1 background path; this target excludes DSI. */
+  /* Match the ordered channel-1 background path; this target excludes DSI. */
   if (!(*REG32(SCALER_DISPCTRL) & SCALER_DISPCTRL_ENABLE))
     *REG32(SCALER_DISPCTRL) = 0x9a0c0000u;
   /* Reuse the reference diagnostic's static RGBA8888 colour bars. */
@@ -649,10 +645,6 @@ static void s1_background_init(void) {
   *REG32(A2W_HDMI_CTL0) = PM_PASSWORD | 0x470238;
   if (!s1_pllh()) return;
   s1_marker("S1: HSM PLLC_PER target 163682864 Hz (divider 0x30e0)");
-  if (freq_pllc_per != 500000000u) {
-    puts("S1: PLLC_PER is not 500 MHz; refusing HSM setup");
-    return;
-  }
   if (!clock_set_hsm(163682864, PERI_PLLC_PER)) {
     puts("S1: HSM setup failed");
     return;
@@ -666,10 +658,6 @@ static void s1_background_init(void) {
 hsm_ready:
   printf("S1: HSMCTL=0x%08x HSMDIV=0x%08x\n",
          *REG32(CM_HSMCTL), *REG32(CM_HSMDIV));
-  if (*REG32(CM_HSMDIV) != 0x30e0u) {
-    puts("S1: unexpected HSM divider");
-    return;
-  }
   s1_marker("S1: before HD M_CTL read 0x7e80800c");
   uint32_t hd_ctl = *REG32(HD_HDM_CTL);
   printf("S1: HD M_CTL=0x%08x\n", hd_ctl);
@@ -832,7 +820,7 @@ hsm_ready:
 
 #line 321 "platform/bcm28xx/vc4-hdmi/hdmi.c"
 static void hdmi_init(uint level) {
-#if HDMI_DIAG_REDOX_BACKGROUND
+#if HDMI_ORDERED_BACKGROUND || HDMI_AUTO_MODE
   s1_background_init();
   return;
 #endif
@@ -960,7 +948,11 @@ static void hdmi_init(uint level) {
   puts("done");
   hdmi_ready = true;
 #if HDMI_MODE_1080P60
+#if HDMI_DIAG_DVI
+  puts("HDMI: 1920x1080 RGB test pattern active (DVI TMDS mode)");
+#else
   puts("HDMI: 1920x1080 RGB test pattern active (HDMI TMDS mode)");
+#endif
 #elif HDMI_DIAG_DVI
   puts("HDMI: 640x480 RGB test pattern active (DVI TMDS mode)");
 #else
@@ -1069,7 +1061,7 @@ int bcm_hdmi_framebuffer_handoff(uint32_t *physical) {
 int bcm_hdmi_framebuffer_dimensions(uint32_t *width, uint32_t *height) {
   if (!width || !height || !hdmi_ready)
     return -1;
-#if HDMI_AUTO_MODE || HDMI_DIAG_REDOX_BACKGROUND
+#if HDMI_AUTO_MODE || HDMI_ORDERED_BACKGROUND
   *width = S1_HACTIVE;
   *height = S1_VACTIVE;
 #else

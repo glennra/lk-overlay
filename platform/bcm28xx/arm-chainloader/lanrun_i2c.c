@@ -82,7 +82,7 @@ static int write_reg(void *context, uint8_t reg, uint8_t value) {
   stop();
   return ret;
 }
-int wo052_lanrun_start(void) {
+int lanrun_expander_start(void) {
   const struct lanrun_bus bus = { .context = 0, .read = read_reg, .write = write_reg };
   /* Do not seize pins that another owner configured, or a busy/stuck bus. */
   if ((*REG32(FSEL4) & PIN_FIELDS) || !gpio_get(SDA) || !gpio_get(SCL)) return -6;

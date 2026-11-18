@@ -9,7 +9,7 @@
 #define STAGE1_GPIO_TIMING 0
 #endif
 
-/* Reuse the three WO-042 pins. Stage 2 clears them before its own markers. */
+/* Reuse the three startup timing pins. Stage 2 clears them before its own markers. */
 #define STAGE1_GPIO_ENTRY 22u
 #define STAGE1_GPIO_LOAD 27u
 #define STAGE1_GPIO_COMPLETE 17u

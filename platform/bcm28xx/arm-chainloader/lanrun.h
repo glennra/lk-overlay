@@ -9,4 +9,4 @@ struct lanrun_bus {
   lanrun_write_fn write;
 };
 int lanrun_fxl_enable(const struct lanrun_bus *bus);
-int wo052_lanrun_start(void);
+int lanrun_expander_start(void);
