@@ -146,11 +146,17 @@ void uart_init(void) {
         // set fifo trigger level
         UARTREG(uart_to_ptr(i), UART_IFLS) = 0; // 1/8 rxfifo, 1/8 txfifo
 
+#if defined(PL011_TX_ONLY)
+        // Leave external RX ownership to Linux after the ARM handoff.
+        UARTREG(uart_to_ptr(i), UART_IMSC) = 0;
+        UARTREG(uart_to_ptr(i), UART_CR) = (1 << 8) | (1 << 0); // tx_enable, uarten
+#else
         // enable rx interrupt
         UARTREG(uart_to_ptr(i), UART_IMSC) = (1<<6)|(1<<4); // rtim, rxim
 
         // enable receive
         UARTREG(uart_to_ptr(i), UART_CR) |= (1<<9) | (1<<8) | (1<<0); // rxen, tx_enable, uarten
+#endif
 #endif
 
 #if !defined(PL011_TX_ONLY)
