@@ -23,7 +23,7 @@ STATIC_COMMAND("pm_usb_on", "enable usb power domain", &cmd_pm_usb_on)
 STATIC_COMMAND_END(pm);
 
 #ifdef ARCH_VPU
-#if IMAGE_TWO_STAGE_POWER_CYCLE && !VPU_STAGE2
+#if IMAGE_TWO_STAGE_STARTUP && !VPU_STAGE2
 /* Run only at stage-1 cold startup, before LK enables HDMI or SDRAM. */
 static int wait_image_power_cycle(uint32_t mask, bool set) {
   for (unsigned int i = 0; i < 10000; ++i) {
@@ -35,43 +35,45 @@ static int wait_image_power_cycle(uint32_t mask, bool set) {
 
 int image_two_stage_power_cycle(void) {
   uint32_t state = *REG32(PM_IMAGE);
-  printf("IMAGE power-cycle: entry stage=1 power_state=0x%08x\n", state);
+  printf("IMAGE startup: entry stage=1 power_state=0x%08x\n", state);
   uart_flush_tx(0);
   /* Never cycle a domain that the ROM or an earlier owner left powered. */
   if (state & (PM_POWUP | PM_POWOK)) {
-    puts("IMAGE power-cycle: already powered; refusing cycle");
+    puts("IMAGE startup: already powered; refusing restart");
     uart_flush_tx(0);
     return -1;
   }
-  uint32_t pm = (state & 0x00fcffffu) | PM_PASSWORD | 0x00010000u;
+  uint32_t pm = (state & 0x007f01ffu) | PM_PASSWORD | 0x00010000u;
   *REG32(PM_IMAGE) = pm;
   *REG32(PM_IMAGE) = pm | PM_POWUP;
   if (wait_image_power_cycle(PM_POWOK, true)) return -1;
-  puts("IMAGE power-cycle: CFG1 power-up complete"); uart_flush_tx(0);
+  puts("IMAGE startup: CFG1 power-up complete"); uart_flush_tx(0);
 
   *REG32(PM_IMAGE) = pm;
   if (wait_image_power_cycle(PM_POWOK, false)) return -1;
-  puts("IMAGE power-cycle: power-down complete"); uart_flush_tx(0);
+  puts("IMAGE startup: power-down complete"); uart_flush_tx(0);
 
   pm = (pm & ~0x00030000u) | 0x00030000u | PM_POWUP;
   *REG32(PM_IMAGE) = pm;
   if (wait_image_power_cycle(PM_POWOK, true)) return -1;
-  puts("IMAGE power-cycle: CFG3 power-up complete"); uart_flush_tx(0);
+  puts("IMAGE startup: CFG3 power-up complete"); uart_flush_tx(0);
 
   pm |= PM_ISPOW; *REG32(PM_IMAGE) = pm;
   pm |= PM_MEMREP; *REG32(PM_IMAGE) = pm;
   if (wait_image_power_cycle(PM_MRDONE, true)) return -1;
   pm |= PM_ISFUNC; *REG32(PM_IMAGE) = pm;
-  puts("IMAGE power-cycle: isolation/repair complete"); uart_flush_tx(0);
+  puts("IMAGE startup: isolation/repair complete"); uart_flush_tx(0);
 
   /* Linux's 32-clock reset propagation delay; no v16mov reset window. */
   *REG32(CM_PERIICTL) = CM_PASSWORD | (*REG32(CM_PERIICTL) | 0x40u);
   udelay(1);
   *REG32(CM_PERIICTL) = CM_PASSWORD | (*REG32(CM_PERIICTL) & ~0x40u);
   udelay(1);
-  pm |= PM_IMAGE_PERIRSTN_SET; *REG32(PM_IMAGE) = pm;
+  pm |= PM_IMAGE_ISPRSTN_SET | PM_IMAGE_H264RSTN_SET |
+        PM_IMAGE_PERIRSTN_SET;
+  *REG32(PM_IMAGE) = pm;
   *REG32(CM_PERIICTL) = CM_PASSWORD | (*REG32(CM_PERIICTL) | 0x40u);
-  puts("IMAGE power-cycle: PERII gate/reset release complete"); uart_flush_tx(0);
+  puts("IMAGE startup: PERII gate/reset release complete"); uart_flush_tx(0);
   return 0;
 }
 #endif
@@ -92,6 +94,14 @@ void hdmi_enable_power_domain(void) {
 
 void power_up_image(void) {
   puts("image domain starting...");
+#if IMAGE_TWO_STAGE_STARTUP
+  /* Stage 1 is the only owner allowed to perform the cold-start sequence.
+   * Do not rewrite CFG or reset state after HDMI/USB consumers are active. */
+  if (*REG32(PM_IMAGE) & PM_POWUP) {
+    puts("IMAGE startup: repeated request -> already initialized; no restart");
+    return;
+  }
+#endif
   //dumpreg(PM_IMAGE);
   *REG32(PM_IMAGE) |= PM_PASSWORD | 0x10000 | BV(6); // CFG = 1
 #if 0

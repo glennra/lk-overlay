@@ -8,11 +8,20 @@ BOOTCODE := 1
 VPU_STAGE2 := 1
 HDMI_HOLD_ARM_BOOT ?= 0
 GLOBAL_DEFINES += BOOTCODE=1 VPU_STAGE2=1 BCM283X_PLLD_CONTROL=1 BCM283X_HDMI=1 HDMI_HOLD_ARM_BOOT=$(HDMI_HOLD_ARM_BOOT)
-HDMI_USB_PHY_PREFLIGHT ?= 0
+# The VPU must not consume PL011 RX bytes after Linux handoff.
+GLOBAL_DEFINES += PL011_TX_ONLY
+# Pi 3B+ Linux/USB handoff requires the full firmware PHY setup.  The
+# no-PHY diagnostic reaches earlycon but stops before normal Linux bring-up.
+HDMI_USB_PHY_PREFLIGHT ?= 1
 ifeq ($(HDMI_USB_PHY_PREFLIGHT),1)
 MODULES += platform/bcm28xx/usb-phy
 endif
 GLOBAL_DEFINES += HDMI_USB_PHY_PREFLIGHT=$(HDMI_USB_PHY_PREFLIGHT)
+# Opt-in cold-start IMAGE/PERII ownership correction. The sequence
+# executes in the stage-1 project; stage 2 only observes the initialized state.
+EARLY_IMAGE_PERII_STARTUP ?= 0
+GLOBAL_DEFINES += EARLY_IMAGE_PERII_STARTUP=$(EARLY_IMAGE_PERII_STARTUP)
+GLOBAL_DEFINES += IMAGE_TWO_STAGE_STARTUP=$(EARLY_IMAGE_PERII_STARTUP)
 HDMI_USB_EARLY_HUB ?= 0
 GLOBAL_DEFINES += HDMI_USB_EARLY_HUB=$(HDMI_USB_EARLY_HUB)
 HDMI_USB_PHY_WRITE_ONLY ?= 0
