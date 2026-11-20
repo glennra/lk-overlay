@@ -418,7 +418,7 @@ static void hdmi_prepare_scanout(void) {
 #if !(HDMI_MODE_1080P60 || HDMI_MODE_720P60 || HDMI_MODE_1280X800)
 #error "S1 requires a supported mode"
 #endif
-#ifdef BCM283X_DSI_HVS
+#if defined(BCM283X_DSI_HVS) && !defined(DISPLAY_RUNTIME_AUTO)
 #error "S1 must not reset or occupy an active DSI HVS"
 #endif
 /* Diagnostic implementation derived from the ordered hardware sequence in
@@ -435,7 +435,16 @@ static void s1_marker(const char *s) {
       strcmp(s, "S1: before scheduler timing write 0x7e9020c0") &&
       strcmp(s, "S1: before scheduler mode read 0x7e9020c0") &&
       strcmp(s, "S1: before scheduler mode polling 0x7e9020c0") &&
-      strcmp(s, "S1: before FIFO recenter polling 0x7e90205c")) return;
+      strcmp(s, "S1: before FIFO recenter polling 0x7e90205c") &&
+      strcmp(s, "S1: before HDMI timing writes") &&
+      strcmp(s, "S1: timing HORZA") &&
+      strcmp(s, "S1: timing HORZB") &&
+      strcmp(s, "S1: timing VERTA0") &&
+      strcmp(s, "S1: timing VERTB0") &&
+      strcmp(s, "S1: timing VERTA1") &&
+      strcmp(s, "S1: timing VERTB1") &&
+      strcmp(s, "S1: timing MISC") &&
+      strcmp(s, "S1: after HDMI timing writes")) return;
 #endif
   puts(s);
   uart_flush_tx(0);
@@ -686,6 +695,8 @@ hsm_ready:
   uint32_t scheduler = *REG32(HDMI_SCHEDULER_CONTROL);
   *REG32(HDMI_SCHEDULER_CONTROL) = scheduler | 0x00008020u;
 #endif
+  s1_marker("S1: before HDMI timing writes");
+  s1_marker("S1: timing HORZA");
   *REG32(HDMI_HORZA) = VC4_HDMI_HORZA_HPOS |
 #if HDMI_AUTO_MODE
       (auto_mode.vsync_positive ? VC4_HDMI_HORZA_VPOS : 0) |
@@ -693,17 +704,24 @@ hsm_ready:
       VC4_HDMI_HORZA_VPOS |
 #endif
       S1_HACTIVE;
+  s1_marker("S1: timing HORZB");
   *REG32(HDMI_HORZB) = (S1_HBP << 20) |
       (S1_HSYNC << 10) | S1_HFP;
+  s1_marker("S1: timing VERTA0");
   *REG32(HDMI_VERTA0) = (S1_VSYNC << 20) |
       (S1_VFP << 13) | S1_VACTIVE;
+  s1_marker("S1: timing VERTB0");
   *REG32(HDMI_VERTB0) = S1_VBP;
+  s1_marker("S1: timing VERTA1");
   *REG32(HDMI_VERTA1) = (S1_VSYNC << 20) |
       (S1_VFP << 13) | S1_VACTIVE;
+  s1_marker("S1: timing VERTB1");
   *REG32(HDMI_VERTB1) = S1_VBP;
+  s1_marker("S1: timing MISC");
   *REG32(HDMI_MISC_CONTROL) = 0;
   *REG32(HDMI_VID_CTL) = 0;
   *REG32(HDMI_CSC_CTL) = HDMI_CSC_CTL_ORDER_BGR;
+  s1_marker("S1: after HDMI timing writes");
   s1_marker("S1: FIFO master and PV2 setup");
   *REG32(HDMI_FIFO_CTL) = 1;
   /* Known writes, without unqualified reads of the potentially stalled PV. */
@@ -819,7 +837,7 @@ hsm_ready:
 #endif
 
 #line 321 "platform/bcm28xx/vc4-hdmi/hdmi.c"
-static void hdmi_init(uint level) {
+void bcm_hdmi_init(uint level) {
 #if HDMI_ORDERED_BACKGROUND || HDMI_AUTO_MODE
   s1_background_init();
   return;
@@ -1049,7 +1067,6 @@ static void vc4_hdmi_phy_init(void) {
 }
 
 /* Must complete before the same-level ARM chainloader hook. */
-LK_INIT_HOOK(hdmi, &hdmi_init, LK_INIT_LEVEL_PLATFORM+9);
 
 int bcm_hdmi_framebuffer_handoff(uint32_t *physical) {
   if (!physical || !hdmi_ready)

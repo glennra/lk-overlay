@@ -4,6 +4,9 @@
 #include <lk/debug.h>
 #include <platform/bcm28xx/i2c.h>
 #include <platform/bcm28xx/pll_read.h>
+#include <platform/bcm28xx/udelay.h>
+
+#define I2C_WAIT_TIMEOUT_US 20000u
 
 struct i2c_regs {
   uint32_t ctrl;
@@ -68,6 +71,15 @@ static void i2c_clear_fifo(unsigned busnum) {
   regs->ctrl |= I2C_C_CLEAR0 | I2C_C_CLEAR1;
 }
 
+static int i2c_wait_status(volatile struct i2c_regs *regs, uint32_t mask) {
+  for (unsigned elapsed = 0; elapsed < I2C_WAIT_TIMEOUT_US; ++elapsed) {
+    if (regs->stat & mask)
+      return 0;
+    udelay(1);
+  }
+  return -1;
+}
+
 int i2c_xfer(unsigned busnum, unsigned addr,
 	     char *sendbuf, size_t sendsz,
 	     char *recvbuf, size_t recvsz) {
@@ -87,24 +99,29 @@ int i2c_xfer(unsigned busnum, unsigned addr,
   if (sendsz) {
     regs->dlen = sendsz;
     regs->ctrl |= I2C_C_ST;
-    while (!(regs->stat & (I2C_S_ERR | I2C_S_TA)))
-      ;
+    if (i2c_wait_status(regs, I2C_S_ERR | I2C_S_TA)) {
+      ret = -1;
+      goto fail;
+    }
 
     while(sendsz--) {
-      while (!(regs->stat & (I2C_S_CLKT | I2C_S_ERR | I2C_S_TXD)))
-	;
+      if (i2c_wait_status(regs, I2C_S_CLKT | I2C_S_ERR | I2C_S_TXD)) {
+        ret = -1;
+        goto fail;
+      }
       if (regs->stat & (I2C_S_CLKT | I2C_S_ERR)) {
-	regs->stat = I2C_S_CLKT | I2C_S_ERR | I2C_S_DONE;
-	return -1;
+	ret = -1;
+	goto fail;
       }
       regs->fifo = *sendbuf++;
     }
 
-    while (!(regs->stat & ( (I2C_S_CLKT | I2C_S_ERR | I2C_S_DONE))))
-      ;
+    if (i2c_wait_status(regs, I2C_S_CLKT | I2C_S_ERR | I2C_S_DONE)) {
+      ret = -1;
+      goto fail;
+    }
     if ((regs->stat & (I2C_S_CLKT | I2C_S_ERR))) {
-      while ((regs->stat & I2C_S_TA))
-	;
+      i2c_wait_status(regs, I2C_S_TA | I2C_S_DONE | I2C_S_ERR);
       dprintf(INFO, "Write failed, status 0x%08x\n", regs->stat);
       recvsz = 0;
       ret = -1;
@@ -115,19 +132,27 @@ int i2c_xfer(unsigned busnum, unsigned addr,
   if (recvsz) {
     regs->dlen = recvsz;
     regs->ctrl |= I2C_C_ST | I2C_C_READ;
-    while (!(regs->stat & (I2C_S_ERR | I2C_S_DONE | I2C_S_TA)))
-      ;
+    if (i2c_wait_status(regs, I2C_S_ERR | I2C_S_DONE | I2C_S_TA)) {
+      ret = -1;
+      goto fail;
+    }
 
-    while(!(regs->stat & I2C_S_ERR)) {
+    while(!(regs->stat & (I2C_S_ERR | I2C_S_CLKT))) {
       if ((regs->stat & I2C_S_RXD)) {
 	*recvbuf++ = regs->fifo;
 	if (--recvsz == 0)
 	  break;
       }
+      if (i2c_wait_status(regs, I2C_S_RXD | I2C_S_ERR | I2C_S_CLKT)) {
+        ret = -1;
+        goto fail;
+      }
     }
     if (!recvsz && !regs->dlen) {
-      while (!(regs->stat & I2C_S_DONE))
-	;
+      if (i2c_wait_status(regs, I2C_S_DONE)) {
+        ret = -1;
+        goto fail;
+      }
     } else {
       dprintf(INFO, "Read failed, status 0x%08x\n", regs->stat);
       ret = -1;
@@ -135,10 +160,10 @@ int i2c_xfer(unsigned busnum, unsigned addr,
   }
 
   if ((regs->stat & (I2C_S_CLKT | I2C_S_ERR))) {
-    while ((regs->stat & I2C_S_TA) && !(regs->stat & I2C_S_RXD))
-      ;
+    i2c_wait_status(regs, I2C_S_TA | I2C_S_RXD | I2C_S_DONE | I2C_S_ERR);
   }
 
+fail:
   regs->stat = I2C_S_CLKT | I2C_S_ERR | I2C_S_DONE;
   i2c_clear_fifo(busnum);
   regs->ctrl = 0;

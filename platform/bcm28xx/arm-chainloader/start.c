@@ -8,13 +8,7 @@
 #include <platform/bcm28xx/arm_chainloader.h>
 #include <platform/bcm28xx/cm.h>
 #include <platform/bcm28xx/a2w.h>
-#if BCM283X_HDMI
-#include <platform/bcm28xx/hdmi_framebuffer.h>
-int bcm_hdmi_framebuffer_handoff(uint32_t *physical);
-void bcm_hdmi_run_boot_animation(void);
-#else
-#include <platform/bcm28xx/display.h>
-#endif
+#include <platform/bcm28xx/display_handoff.h>
 #include <platform/bcm28xx/gpio.h>
 #include <platform/bcm28xx/otp.h>
 #include <platform/bcm28xx/pll.h>
@@ -131,29 +125,32 @@ static void __attribute__((optimize("-O1"))) arm_chainloader_init(uint level) {
   return;
 #endif
   bcm_boot_timing_mark(BCM_BOOT_T3_LK_ENTRY);
-  uint32_t active, revision = otp_read(30), serial = otp_read(28);
+  struct bcm_display_handoff display = { 0 };
+  uint32_t revision = otp_read(30), serial = otp_read(28);
   uint32_t uart_hz;
   size_t payload_size = (uintptr_t)arm_chainloader_end - (uintptr_t)arm_chainloader_start;
   /* The firmware-data producer currently describes a 1 GiB Pi 3B/3B+. */
-  if (!arm_chainloader_board_supported(revision) ||
-#if BCM283X_HDMI
-      bcm_hdmi_framebuffer_handoff(&active)) {
-#else
-      bcm_dsi7_framebuffer_handoff(&active)) {
-#endif
-    puts("ARM: unsupported board or display not ready; not releasing ARM");
+  int display_status = bcm_display_get_handoff(&display);
+  printf("DISPLAY_BACKEND=%s status=%d fb=0x%08x bus=0x%08x %ux%u pitch=%u reserved=0x%08x+0x%08x\n",
+         bcm_display_backend_name(), display_status, display.fb_arm_phys,
+         display.fb_bus_addr, display.width, display.height, display.pitch,
+         display.reserved_base, display.reserved_size);
+  if (!arm_chainloader_board_supported(revision) || display_status != BCM_DISPLAY_OK ||
+      display.backend == 0) {
+    puts("ARM: unsupported board or display handoff invalid; not releasing ARM");
     return;
   }
   arch_disable_ints();
   uart_hz = get_uart_base_freq();
   if (arm_chainloader_prepare_image((void *)0xc0000000u, 0x100000u,
                                     arm_chainloader_start, payload_size,
-                                    serial, revision, uart_hz, active) ||
+                                    serial, revision, uart_hz, display.fb_arm_phys) ||
       arm_chainloader_configure_mappings(REG32(ARM_TRANSLATE), ARM_CHAINLOADER_MAP_ENTRIES)) {
     puts("ARM: chainloader preparation failed; not releasing ARM");
     return;
   }
-  printf("ARM: payload=%u bytes framebuffer=0x%08x uart=%u Hz\n", payload_size, active, uart_hz);
+  printf("ARM: payload=%u bytes framebuffer=0x%08x uart=%u Hz\n", payload_size,
+         display.fb_arm_phys, uart_hz);
 #if DSI_USB_POWER_PREFLIGHT && !BCM283X_HDMI
   puts("DSI: before IMAGE/USB power setup");
   power_up_usb();
@@ -176,16 +173,6 @@ static void __attribute__((optimize("-O1"))) arm_chainloader_init(uint level) {
   puts("ARM: releasing chainloader");
   bcm_boot_timing_mark(BCM_BOOT_T11_ARM_HANDOFF);
   arm_chainloader_release_bridge();
-#if BCM283X_HDMI
-  bcm_hdmi_run_boot_animation();
-#else
-#if DSI_STATIC_HANDOFF
-  puts("DSI: static scanout retained after ARM release");
-  for (;;)
-    __asm__ volatile("nop");
-#else
-  bcm_dsi7_run_boot_animation();
-#endif
-#endif
+  bcm_display_run_boot_animation();
 }
 LK_INIT_HOOK(arm_chainloader, &arm_chainloader_init, LK_INIT_LEVEL_PLATFORM + 10);

@@ -1,8 +1,9 @@
 TOOLCHAIN_PREFIX ?= vc4-elf-
-IMAGE_BASE ?= 0x80020000
+IMAGE_BASE ?= 0x90000000
 HOST_CC ?= cc
 BUILD_DIR ?= ../../build-arm-chainloader-test
 PLATFORM := ../../platform/bcm28xx
+DISPLAY_HANDOFF_INCLUDE := $(PLATFORM)/display-handoff/include
 
 .PHONY: test check
 test: $(BUILD_DIR)/handoff_test $(BUILD_DIR)/hdmi_handoff_test $(BUILD_DIR)/clock_test $(BUILD_DIR)/release_test
@@ -15,14 +16,14 @@ $(BUILD_DIR)/handoff_test: handoff_test.c $(PLATFORM)/arm-chainloader/handoff.c 
 		$(PLATFORM)/include/platform/bcm28xx/arm_chainloader.h \
 		$(PLATFORM)/include/platform/bcm28xx/dsi_framebuffer.h
 	mkdir -p $(BUILD_DIR)
-	$(HOST_CC) -std=c11 -Wall -Wextra -Werror -I$(PLATFORM)/include \
+	$(HOST_CC) -std=c11 -Wall -Wextra -Werror -I$(PLATFORM)/include -I$(DISPLAY_HANDOFF_INCLUDE) \
 		handoff_test.c $(PLATFORM)/arm-chainloader/handoff.c $(PLATFORM)/arm-chainloader/mappings.c -o $@
 
 $(BUILD_DIR)/hdmi_handoff_test: hdmi_handoff_test.c $(PLATFORM)/arm-chainloader/handoff.c \
 		$(PLATFORM)/include/platform/bcm28xx/arm_chainloader.h \
 		$(PLATFORM)/include/platform/bcm28xx/hdmi_framebuffer.h
 	mkdir -p $(BUILD_DIR)
-	$(HOST_CC) -std=c11 -Wall -Wextra -Werror -DBCM283X_HDMI=1 -DHDMI_MODE_1080P60=1 -I$(PLATFORM)/include \
+	$(HOST_CC) -std=c11 -Wall -Wextra -Werror -DBCM283X_HDMI=1 -DHDMI_MODE_1080P60=1 -I$(PLATFORM)/include -I$(DISPLAY_HANDOFF_INCLUDE) \
 		hdmi_handoff_test.c $(PLATFORM)/arm-chainloader/handoff.c -o $@
 
 $(BUILD_DIR)/clock_test: clock_test.c $(PLATFORM)/arm-chainloader/clock.c \

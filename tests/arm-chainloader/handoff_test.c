@@ -4,6 +4,24 @@
 #include <string.h>
 #include <platform/bcm28xx/arm_chainloader.h>
 #include <platform/bcm28xx/dsi_framebuffer.h>
+#include <platform/bcm28xx/display_handoff.h>
+
+int bcm_display_get_handoff(struct bcm_display_handoff *out) {
+  if (!out) return BCM_DISPLAY_INVALID_FRAMEBUFFER;
+  *out = (struct bcm_display_handoff) {
+    .backend = BCM_DISPLAY_DSI,
+    .fb_arm_phys = DSI_FB_PRIMARY_PHYS,
+    .fb_bus_addr = DSI_FB_PRIMARY_PHYS,
+    .fb_primary_phys = DSI_FB_PRIMARY_PHYS,
+    .fb_back_phys = DSI_FB_BACK_PHYS,
+    .width = DSI_FB_WIDTH, .height = DSI_FB_HEIGHT,
+    .pitch = DSI_FB_STRIDE_BYTES,
+    .pixel_format = ARM_CHAINLOADER_FORMAT_A8R8G8B8,
+    .buffer_size = DSI_FB_WIDTH * DSI_FB_HEIGHT * 4u,
+    .reserved_base = DSI_FB_POOL_BASE, .reserved_size = DSI_FB_POOL_SIZE,
+  };
+  return BCM_DISPLAY_OK;
+}
 
 int main(void) {
   assert(arm_chainloader_board_supported(0x00a02082));

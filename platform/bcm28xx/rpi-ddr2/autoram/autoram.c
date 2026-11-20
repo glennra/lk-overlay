@@ -9,7 +9,12 @@ static void autoram_dram_init(uint level) {
 #ifndef VPU_STAGE2
   sdram_init();
 #endif
+#if VPU_STAGE2_RELOCATED
+  /* Keep the live VPU heap away from the ARM kernel and chainloader. */
+  uint32_t start = UNCACHED_RAM | (257 * MB);
+#else
   uint32_t start = UNCACHED_RAM | (1 * MB);
+#endif
   uint32_t length = 20 * MB;
   novm_add_arena("dram", start, length);
 }

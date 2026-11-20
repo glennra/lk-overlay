@@ -1,24 +1,7 @@
 #include <stddef.h>
 #include <string.h>
 #include <platform/bcm28xx/arm_chainloader.h>
-#if BCM283X_HDMI
-#include <platform/bcm28xx/hdmi_framebuffer.h>
-#define FB_POOL_BASE HDMI_FB_POOL_BASE
-#define FB_POOL_SIZE HDMI_FB_POOL_SIZE
-#define FB_PRIMARY_PHYS HDMI_FB_PRIMARY_PHYS
-#define FB_BACK_PHYS HDMI_FB_BACK_PHYS
-#define FB_WIDTH HDMI_FB_WIDTH
-#define FB_HEIGHT HDMI_FB_HEIGHT
-int bcm_hdmi_framebuffer_dimensions(uint32_t *width, uint32_t *height);
-#else
-#include <platform/bcm28xx/dsi_framebuffer.h>
-#define FB_POOL_BASE DSI_FB_POOL_BASE
-#define FB_POOL_SIZE DSI_FB_POOL_SIZE
-#define FB_PRIMARY_PHYS DSI_FB_PRIMARY_PHYS
-#define FB_BACK_PHYS DSI_FB_BACK_PHYS
-#define FB_WIDTH DSI_FB_WIDTH
-#define FB_HEIGHT DSI_FB_HEIGHT
-#endif
+#include <platform/bcm28xx/display_handoff.h>
 
 int arm_chainloader_board_supported(uint32_t revision) {
   uint32_t type = (revision >> 4) & 0xff;
@@ -29,19 +12,21 @@ int arm_chainloader_board_supported(uint32_t revision) {
 int arm_chainloader_write_firmware_data(volatile uint32_t *data, uint32_t serial,
                                        uint32_t revision, uint32_t uart_hz,
                                        uint32_t active_framebuffer) {
-  if (!data || (active_framebuffer != FB_PRIMARY_PHYS &&
-                active_framebuffer != FB_BACK_PHYS))
+  struct bcm_display_handoff fb;
+  if (!data || bcm_display_get_handoff(&fb) != BCM_DISPLAY_OK ||
+      (active_framebuffer != fb.fb_primary_phys &&
+       active_framebuffer != fb.fb_back_phys) ||
+      (fb.fb_bus_addr != fb.fb_primary_phys &&
+       fb.fb_bus_addr != fb.fb_back_phys) || !fb.width || !fb.height ||
+      fb.pitch < fb.width * 4u ||
+      fb.buffer_size < fb.pitch * fb.height ||
+      fb.fb_primary_phys < fb.reserved_base ||
+      fb.fb_back_phys < fb.reserved_base ||
+      fb.fb_primary_phys + fb.buffer_size > fb.reserved_base + fb.reserved_size ||
+      fb.fb_back_phys + fb.buffer_size > fb.reserved_base + fb.reserved_size ||
+      active_framebuffer < fb.reserved_base ||
+      active_framebuffer + fb.buffer_size > fb.reserved_base + fb.reserved_size)
     return -1;
-
-  uint32_t width = FB_WIDTH, height = FB_HEIGHT;
-#if BCM283X_HDMI
-  if (bcm_hdmi_framebuffer_dimensions(&width, &height) ||
-      !((width == 1920 && height == 1080) ||
-        (width == 1280 && (height == 800 || height == 720)) ||
-        (width == 640 && height == 480)) ||
-      (uint64_t)width * height * 4u > FB_BACK_PHYS - FB_PRIMARY_PHYS)
-    return -1;
-#endif
 
   /* Matches firmware_arm_data_t and reserved indices in rpi-open-firmware. */
   data[0] = 0; /* kRamSize1GB */
@@ -50,15 +35,15 @@ int arm_chainloader_write_firmware_data(volatile uint32_t *data, uint32_t serial
   data[3] = revision;
   data[4] = uart_hz;
   data[5] = ARM_CHAINLOADER_FRAMEBUFFER_MAGIC;
-  data[6] = FB_POOL_BASE;
-  data[7] = FB_POOL_SIZE;
-  data[8] = FB_PRIMARY_PHYS;
-  data[9] = FB_BACK_PHYS;
+  data[6] = fb.reserved_base;
+  data[7] = fb.reserved_size;
+  data[8] = fb.fb_primary_phys;
+  data[9] = fb.fb_back_phys;
   data[10] = active_framebuffer;
-  data[11] = width;
-  data[12] = height;
-  data[13] = width; /* stride in pixels, not bytes */
-  data[14] = ARM_CHAINLOADER_FORMAT_A8R8G8B8;
+  data[11] = fb.width;
+  data[12] = fb.height;
+  data[13] = fb.pitch / 4u; /* stride in pixels, not bytes */
+  data[14] = fb.pixel_format;
   return 0;
 }
 
@@ -70,7 +55,7 @@ int arm_chainloader_prepare_image(void *destination, size_t capacity,
                           ARM_CHAINLOADER_FIRMWARE_DATA_WORDS * sizeof(uint32_t);
   if (!destination || !payload || ((uintptr_t)destination & 3u) ||
       payload_size < data_end || payload_size > capacity ||
-      (active_framebuffer != FB_PRIMARY_PHYS && active_framebuffer != FB_BACK_PHYS))
+      !active_framebuffer)
     return -1;
 
   memcpy(destination, payload, payload_size);

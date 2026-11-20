@@ -46,6 +46,15 @@ static int attiny_read(uint8_t reg, uint8_t *value) {
   return ret;
 }
 
+/* Passive identity check used by the runtime display selector. */
+int bcm_panel_attiny_probe(void) {
+  uint8_t id;
+  gpio_config(44, kBCM2708Pinmux_ALT1);
+  gpio_config(45, kBCM2708Pinmux_ALT1);
+  i2c_set_rate(ATTINY_BUS, 100000);
+  return attiny_read(ATTINY_REG_ID, &id);
+}
+
 int bcm_panel_attiny_init(void) {
   uint8_t id;
   /* Pi 3 DSI/CSI uses I2C0 on GPIO44/45, ALT1. */

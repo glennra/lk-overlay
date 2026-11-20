@@ -25,13 +25,22 @@ ifeq ($(ARCH),vpu)
   MODULE_DEPS += platform/bcm28xx/pll
   ifeq ($(BOOTCODE),1)
     ifeq ($(VPU_STAGE2),1)
+      ifeq ($(VPU_STAGE2_RELOCATED),1)
+      MEMBASE := 0x90000000
+      LINKER_SCRIPT += $(LOCAL_DIR)/bootcode-stage2-relocated.ld
+      else
       MEMBASE := 0x80020000 # after the first-stage 128 KiB region
       LINKER_SCRIPT += $(LOCAL_DIR)/bootcode-stage2.ld
+      endif
     else
       MEMBASE := 0x80000000 # in the 8 alias
       LINKER_SCRIPT += $(LOCAL_DIR)/bootcode.ld
     endif
+    ifeq ($(VPU_STAGE2_RELOCATED),1)
+    MEMSIZE := 0x40000
+    else
     MEMSIZE := 0x20000 # 128kb
+    endif
   else
     MEMBASE := 0xc0000000
     MEMSIZE ?= 0x01400000 # 20MB

@@ -55,6 +55,7 @@ int bcm_dsi7_framebuffer_handoff(uint32_t *physical) {
   return (*physical == DSI_FB_PRIMARY_PHYS || *physical == DSI_FB_BACK_PHYS) ? 0 : -1;
 }
 
+/* Runtime display manager invokes bcm_dsi7_scanout() after probing. */
 static void animation_capture_sentinel(gfx_surface *surface) {
   volatile uint32_t *pixels = (volatile uint32_t *)surface->ptr;
   unsigned int n = 0;
@@ -209,7 +210,6 @@ static int prepare_framebuffer(void) {
   mutex_release(&channels[HVS_DSI1_CHANNEL].lock);
   return 0;
 }
-
 static int prepare_scanout(void) {
 #if !WITH_MATRIX_BOOT_ANIMATION
   static const uint32_t colors[] = {
@@ -277,10 +277,3 @@ int bcm_dsi7_scanout(void) {
 #endif
   return 0;
 }
-
-static void dsi7_init_hook(uint level) {
-  (void)level;
-  if (bcm_dsi7_scanout())
-    puts("DSI: display initialization failed");
-}
-LK_INIT_HOOK(dsi7_display, &dsi7_init_hook, LK_INIT_LEVEL_PLATFORM + 1);
