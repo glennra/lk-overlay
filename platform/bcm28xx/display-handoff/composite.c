@@ -4,6 +4,7 @@
 #include <lk/reg.h>
 #include <platform/bcm28xx.h>
 #include <platform/bcm28xx/animation.h>
+#include <platform/bcm28xx/clock.h>
 #include <platform/bcm28xx/arm_chainloader.h>
 #include <platform/bcm28xx/display_handoff.h>
 #include <platform/bcm28xx/hvs.h>
@@ -16,7 +17,6 @@
 #define COMPOSITE_FB_SIZE 0x00400000u
 #define COMPOSITE_WIDTH 720u
 #define COMPOSITE_STRIDE (COMPOSITE_WIDTH * 4u)
-#define COMPOSITE_SQUARE 96u
 
 int bcm_vec_init(int standard);
 static gfx_surface *base_fb;
@@ -106,41 +106,48 @@ static void composite_wait_field(void) {
 }
 
 void bcm_display_run_boot_animation_composite(void) {
+  uint32_t animation_width, animation_height;
+  bcm_animation_fit(COMPOSITE_WIDTH, composite_height, &animation_width, &animation_height);
+  if (!animation_width || !animation_height) return;
   gfx_surface *fb = gfx_create_surface((void *)(uintptr_t)(BCM_SDRAM_BUS_ADDR_BASE_NO_L2 |
-      COMPOSITE_FB_BACK), COMPOSITE_SQUARE, COMPOSITE_SQUARE, COMPOSITE_SQUARE,
+      COMPOSITE_FB_BACK), animation_width, animation_height, animation_width,
       GFX_FORMAT_ARGB_8888);
   hvs_layer *overlay = malloc(sizeof(*overlay));
   bcm_animation animation;
   if (!fb || !overlay) return;
   fb->free_on_destroy = false;
-  bcm_animation_surface surface = {
-    .width = COMPOSITE_SQUARE, .height = COMPOSITE_SQUARE,
-    .stride_bytes = COMPOSITE_SQUARE * 4u, .pixel_format = BCM_ANIMATION_ARGB8888,
-    .cpu_address = (uintptr_t)fb->ptr, .dma_bus_address = (uintptr_t)fb->ptr,
-    .allocation_bytes = fb->len, .safe_width = COMPOSITE_SQUARE,
-    .safe_height = COMPOSITE_SQUARE,
-  };
-  if (bcm_animation_init(&animation, &surface, 1) ||
-      bcm_animation_arm_released(&animation) || bcm_animation_start(&animation) ||
-      bcm_animation_render(&animation)) return;
-  gfx_flush(fb);
-  mk_unity_layer(overlay, fb, 20, 16u, (composite_height - COMPOSITE_SQUARE) / 2u);
-  overlay->alpha_mode = alpha_mode_pipeline;
-  hvs_allocate_premade(overlay, 7);
-  if (!overlay->premade_dlist) return;
-  hvs_regen_noscale_noviewport(overlay);
   volatile uint32_t *pixels = (volatile uint32_t *)base_fb->ptr;
   unsigned n = 0;
   for (unsigned y = 0; y < 64u; y += 4u)
     for (unsigned x = 0; x < 128u; x += 4u)
       sentinel[n++] = pixels[y * COMPOSITE_WIDTH + x];
+  bcm_animation_surface surface = {
+    .width = animation_width, .height = animation_height,
+    .stride_bytes = animation_width * 4u, .pixel_format = BCM_ANIMATION_ARGB8888,
+    .cpu_address = (uintptr_t)fb->ptr, .dma_bus_address = (uintptr_t)fb->ptr,
+    .allocation_bytes = fb->len, .safe_width = animation_width,
+    .safe_height = animation_height,
+  };
+  if (bcm_animation_init(&animation, &surface, 1) ||
+      bcm_animation_arm_released(&animation) || bcm_animation_start(&animation) ||
+      bcm_animation_render(&animation)) return;
+  gfx_flush(fb);
+  mk_unity_layer(overlay, fb, 20, (COMPOSITE_WIDTH - animation_width) / 2u,
+                 (composite_height - animation_height) / 2u);
+  overlay->alpha_mode = alpha_mode_pipeline;
+  hvs_allocate_premade(overlay, 7);
+  if (!overlay->premade_dlist) return;
+  hvs_regen_noscale_noviewport(overlay);
   mutex_acquire(&channels[1].lock);
   hvs_dlist_add(1, overlay);
   hvs_update_dlist(1);
   mutex_release(&channels[1].lock);
   puts("VEC: animation waiting for field boundary");
   uart_flush_tx(0);
-  for (unsigned x = 16u;; x += 4u) {
+  composite_wait_field();
+  *REG32(SCALER_DISPLIST1) = channels[1].dlist_target;
+  uint32_t frame_started = *REG32(ST_CLO);
+  for (;;) {
     bool changed = false;
     n = 0;
     for (unsigned y = 0; y < 64u && !changed; y += 4u)
@@ -158,15 +165,12 @@ void bcm_display_run_boot_animation_composite(void) {
       puts("VEC: framebuffer console takeover detected");
       for (;;) __asm__ volatile("nop");
     }
-    if (x > COMPOSITE_WIDTH - 112u) x = 16u;
-    mutex_acquire(&channels[1].lock);
-    overlay->x = x;
-    hvs_regen_noscale_noviewport(overlay);
-    hvs_update_dlist(1);
-    mutex_release(&channels[1].lock);
-    /* Two field events per update; field polarity still needs sink validation. */
     composite_wait_field();
-    composite_wait_field();
-    *REG32(SCALER_DISPLIST1) = channels[1].dlist_target;
+    uint32_t now = *REG32(ST_CLO);
+    if ((uint32_t)(now - frame_started) >= bcm_animation_frame_duration_ms(&animation) * 1000u) {
+      bcm_animation_render(&animation);
+      gfx_flush(fb);
+      frame_started = now;
+    }
   }
 }

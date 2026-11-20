@@ -12,6 +12,7 @@
 #include <platform/bcm28xx/udelay.h>
 #include <platform/bcm28xx/boot_timing.h>
 #include <platform/bcm28xx/animation.h>
+#include <platform/bcm28xx/clock.h>
 #include <lk/reg.h>
 #include <stdio.h>
 #include <stdlib.h>
@@ -110,9 +111,11 @@ void bcm_dsi7_run_boot_animation(void) {
 
   /* Linux receives the buffer that is active at ARM release. */
   gfx_surface *linux_fb = display_layer->fb;
-  const unsigned int square = 96u;
-  const unsigned int square_y = 176u;
-  gfx_surface *overlay_fb = gfx_create_surface(NULL, square, square, square,
+  animation_capture_sentinel(linux_fb);
+  uint32_t animation_width, animation_height;
+  bcm_animation_fit(DSI_FB_WIDTH, DSI_FB_HEIGHT, &animation_width, &animation_height);
+  if (!animation_width || !animation_height) return;
+  gfx_surface *overlay_fb = gfx_create_surface(NULL, animation_width, animation_height, animation_width,
                                                 GFX_FORMAT_ARGB_8888);
   hvs_layer *overlay_layer = NULL;
   bcm_animation animation;
@@ -125,10 +128,11 @@ void bcm_dsi7_run_boot_animation(void) {
   /* The shared renderer owns pixels; DSI owns only this surface's placement
    * and frame-boundary commit. */
   animation_surface = (bcm_animation_surface) {
-    .width = square, .height = square, .stride_bytes = square * 4u,
+    .width = animation_width, .height = animation_height, .stride_bytes = animation_width * 4u,
     .pixel_format = BCM_ANIMATION_ARGB8888, .cpu_address = (uintptr_t)overlay_fb->ptr,
     .dma_bus_address = (uintptr_t)overlay_fb->ptr,
-    .allocation_bytes = overlay_fb->len, .safe_width = square, .safe_height = square,
+    .allocation_bytes = overlay_fb->len, .safe_width = animation_width, .safe_height = animation_height,
+    .flip_vertical = 1,
   };
   if (bcm_animation_init(&animation, &animation_surface, 1) ||
       bcm_animation_arm_released(&animation) ||
@@ -143,7 +147,9 @@ void bcm_dsi7_run_boot_animation(void) {
     puts("DSI: unable to allocate animation layer");
     return;
   }
-  mk_unity_layer(overlay_layer, overlay_fb, 20, 16u, square_y);
+  mk_unity_layer(overlay_layer, overlay_fb, 20,
+                 (DSI_FB_WIDTH - animation_width) / 2u,
+                 (DSI_FB_HEIGHT - animation_height) / 2u);
   /*
    * Do not send this layer through hvs_add_plane_scaled().  That path is
    * known to be unreliable on VC4, even when source and destination sizes
@@ -163,7 +169,6 @@ void bcm_dsi7_run_boot_animation(void) {
   mutex_release(&channels[HVS_DSI1_CHANNEL].lock);
   animation_commit_dlist();
 
-  animation_capture_sentinel(linux_fb);
   puts("DSI: VPU boot animation active");
 
   /*
@@ -172,9 +177,10 @@ void bcm_dsi7_run_boot_animation(void) {
    * code after releasing the ARM.  Linux maps this same framebuffer through
    * simplefb; its first fbcon output changes the sentinel and ends the loop.
    * The animation itself is an HVS overlay, so the framebuffer remains static
-   * while the VPU changes only the overlay position between frames.
+   * while the VPU updates the separate animation overlay.
    */
-  for (unsigned int x = 16u;; x += 4u) {
+  uint32_t frame_started = *REG32(ST_CLO);
+  for (;;) {
     if (animation_sentinel_changed(linux_fb)) {
       mutex_acquire(&channels[HVS_DSI1_CHANNEL].lock);
       overlay_layer->visible = false;
@@ -191,15 +197,13 @@ void bcm_dsi7_run_boot_animation(void) {
       for (;;)
         asm volatile("nop");
     }
-    if (x > DSI_FB_WIDTH - 112u)
-      x = 16u;
-    mutex_acquire(&channels[HVS_DSI1_CHANNEL].lock);
-    overlay_layer->x = x;
-    hvs_regen_noscale_noviewport(overlay_layer);
-    hvs_update_dlist(HVS_DSI1_CHANNEL);
-    mutex_release(&channels[HVS_DSI1_CHANNEL].lock);
-    /* animation_commit_dlist() waits for the next VFP: one update per refresh. */
     animation_commit_dlist();
+    uint32_t now = *REG32(ST_CLO);
+    if ((uint32_t)(now - frame_started) >= bcm_animation_frame_duration_ms(&animation) * 1000u) {
+      bcm_animation_render(&animation);
+      gfx_flush(overlay_fb);
+      frame_started = now;
+    }
   }
 }
 

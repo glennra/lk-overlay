@@ -11,6 +11,7 @@ typedef struct {
   uintptr_t cpu_address, dma_bus_address;
   size_t allocation_bytes;
   uint32_t safe_x, safe_y, safe_width, safe_height;
+  uint32_t flip_vertical;
 } bcm_animation_surface;
 
 enum bcm_animation_state {
@@ -31,6 +32,9 @@ int bcm_animation_init(bcm_animation *, const bcm_animation_surface *, uint32_t)
 int bcm_animation_start(bcm_animation *);
 int bcm_animation_arm_released(bcm_animation *);
 int bcm_animation_render(bcm_animation *);
+void bcm_animation_fit(uint32_t display_width, uint32_t display_height,
+                       uint32_t *width, uint32_t *height);
+uint32_t bcm_animation_frame_duration_ms(const bcm_animation *);
 int bcm_animation_request_takeover(bcm_animation *);
 int bcm_animation_stop(bcm_animation *);
 const char *bcm_animation_state_name(enum bcm_animation_state);
