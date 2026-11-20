@@ -11,6 +11,7 @@
 #include <platform/bcm28xx/pv.h>
 #include <platform/bcm28xx/udelay.h>
 #include <platform/bcm28xx/boot_timing.h>
+#include <platform/bcm28xx/animation.h>
 #include <lk/reg.h>
 #include <stdio.h>
 #include <stdlib.h>
@@ -114,15 +115,28 @@ void bcm_dsi7_run_boot_animation(void) {
   gfx_surface *overlay_fb = gfx_create_surface(NULL, square, square, square,
                                                 GFX_FORMAT_ARGB_8888);
   hvs_layer *overlay_layer = NULL;
+  bcm_animation animation;
+  bcm_animation_surface animation_surface;
 
   if (!overlay_fb) {
     puts("DSI: unable to allocate animation overlay");
     return;
   }
-  /* Keep the diagnostic sprite opaque while validating the HVS path. */
-  gfx_clear(overlay_fb, 0xffff0000);
-  gfx_fillrect(overlay_fb, 8u, 8u, square - 16u, square - 16u,
-               0xffffffff);
+  /* The shared renderer owns pixels; DSI owns only this surface's placement
+   * and frame-boundary commit. */
+  animation_surface = (bcm_animation_surface) {
+    .width = square, .height = square, .stride_bytes = square * 4u,
+    .pixel_format = BCM_ANIMATION_ARGB8888, .cpu_address = (uintptr_t)overlay_fb->ptr,
+    .dma_bus_address = (uintptr_t)overlay_fb->ptr,
+    .allocation_bytes = overlay_fb->len, .safe_width = square, .safe_height = square,
+  };
+  if (bcm_animation_init(&animation, &animation_surface, 1) ||
+      bcm_animation_arm_released(&animation) ||
+      bcm_animation_start(&animation)) {
+    puts("DSI: shared animation initialization failed");
+    return;
+  }
+  bcm_animation_render(&animation);
   gfx_flush(overlay_fb);
   overlay_layer = malloc(sizeof(*overlay_layer));
   if (!overlay_layer) {

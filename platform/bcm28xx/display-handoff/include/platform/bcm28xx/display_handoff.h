@@ -1,11 +1,18 @@
 #pragma once
 
 #include <stdint.h>
+#include <stddef.h>
 
 enum bcm_display_backend_id {
   BCM_DISPLAY_HDMI = 1,
   BCM_DISPLAY_DSI = 2,
+  BCM_DISPLAY_COMPOSITE = 3,
 };
+
+enum bcm_display_output { BCM_DISPLAY_OUTPUT_AUTO = 0, BCM_DISPLAY_OUTPUT_DSI,
+  BCM_DISPLAY_OUTPUT_HDMI, BCM_DISPLAY_OUTPUT_COMPOSITE };
+enum bcm_display_composite_standard { BCM_DISPLAY_STANDARD_PAL = 0,
+  BCM_DISPLAY_STANDARD_NTSC };
 
 enum bcm_display_error {
   BCM_DISPLAY_OK = 0,
@@ -43,3 +50,6 @@ int bcm_display_manager_init(void);
 int bcm_display_selected(void);
 const char *bcm_display_backend_name(void);
 void bcm_display_run_boot_animation(void);
+const char *bcm_display_output_name(enum bcm_display_output);
+int bcm_display_parse_config(const char *, size_t, enum bcm_display_output *,
+                             enum bcm_display_composite_standard *);

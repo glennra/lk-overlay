@@ -13,6 +13,7 @@ MODULES += \
 
 #MODULES += lib/debugcommands
 MODULES += platform/bcm28xx/arm
+MODULES += platform/bcm28xx/animation
 #MODULES += app/shell
 #MODULES += app/yuv
 #MODULES += lib/gfxconsole

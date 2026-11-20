@@ -42,7 +42,7 @@ static void draw_background_grid(void) {
   //hvs_add_plane(gfx_grid, 0, 0, false);
 }
 
-static void vec_init(uint level) {
+int bcm_vec_init(int standard) {
   int channel = 1; // on VC4, the VEC is hard-wired to hvs channel 1
   int width;
   int height;
@@ -76,7 +76,7 @@ static void vec_init(uint level) {
   *REG32(VEC_DAC_CONFIG) = VEC_DAC_CONFIG_DAC_CTRL(0xc) | VEC_DAC_CONFIG_DRIVER_CTRL(0xc) | VEC_DAC_CONFIG_LDO_BIAS_CTRL(0x46);
 #endif
   *REG32(VEC_MASK0) = 0;
-  enum vec_mode mode = ntsc;
+  enum vec_mode mode = standard ? ntsc : pal;
   switch (mode) {
     case ntsc:
       *REG32(VEC_CONFIG0) = VEC_CONFIG0_NTSC_STD | VEC_CONFIG0_PDEN;
@@ -107,7 +107,7 @@ static void vec_init(uint level) {
   *REG32(VEC_CFG) = VEC_CFG_VEC_EN;
   struct pv_timings t;
   t.clock_mux = clk_vec;
-  bool ntsc_mode = true;
+  bool ntsc_mode = standard != 0;
   if (ntsc_mode) {
     t.vfp = 3;
     t.vsync = 4; // try 3
@@ -125,6 +125,10 @@ static void vec_init(uint level) {
     t.hsync = 64;
     t.hbp = 60;
     t.hactive = 720;
+  } else {
+    t.vfp = 5; t.vsync = 5; t.vbp = 19; t.vactive = 288;
+    t.vfp_even = 5; t.vsync_even = 5; t.vbp_even = 19; t.vactive_even = 288;
+    t.interlaced = true; t.hfp = 12; t.hsync = 64; t.hbp = 68; t.hactive = 720;
   }
 #ifdef RPI4
   setup_pixelvalve(&t, 3);
@@ -162,9 +166,5 @@ static void vec_init(uint level) {
 
   //dance_start(logo, 1);
 #endif
+  return 0;
 }
-
-//static void vec_entry(const struct app_descriptor *app, void *args) {
-//}
-
-LK_INIT_HOOK(vec, &vec_init, LK_INIT_LEVEL_PLATFORM - 1);

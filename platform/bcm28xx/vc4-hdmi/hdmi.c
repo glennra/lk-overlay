@@ -13,6 +13,12 @@
 #include <stdio.h>
 #include <platform/bcm28xx/print_timestamp.h>
 #include <platform/bcm28xx/hdmi_framebuffer.h>
+#include <platform/bcm28xx/animation.h>
+#include <platform/bcm28xx/hvs.h>
+#include <platform/bcm28xx/pv.h>
+#include <platform/bcm28xx/udelay.h>
+#include <lib/gfx.h>
+#include <kernel/mutex.h>
 #include <stdlib.h>
 #include <string.h>
 
@@ -633,6 +639,11 @@ static void s1_background_init(void) {
   dlist_memory[21] = 0xc0c0c0c0u;
   dlist_memory[22] = S1_HACTIVE * 4u;
   dlist_memory[23] = 0x80000000u;
+  /* The ordered scanout uses fixed slots outside the HVS layer allocator.
+   * Keep subsequent hvs_update_dlist() calls from overwriting the active
+   * entry while constructing the first animation list. */
+  if (display_slot < 24)
+    display_slot = 24;
   hvs_channels[1].dispbase = 0x3c8f0800u;
   *REG32(SCALER_DISPLIST1) = 16;
   hvs_channels[1].dispctrl = SCALER_DISPCTRLX_RESET;
@@ -1089,10 +1100,125 @@ int bcm_hdmi_framebuffer_dimensions(uint32_t *width, uint32_t *height) {
 }
 
 void bcm_hdmi_run_boot_animation(void) {
-  /* Static test pattern is intentional for Milestone A. */
-#if !HDMI_HOLD_ARM_BOOT
-  puts("HDMI: static scanout retained after ARM release");
-  for (;;)
-    __asm__ volatile("nop");
-#endif
+  uint32_t width, height;
+  if (bcm_hdmi_framebuffer_dimensions(&width, &height)) return;
+  if (width < 128u || height < 96u) {
+    puts("HDMI: framebuffer too small for boot animation");
+    return;
+  }
+
+  /* Follow the working DSI path exactly: make both the Linux framebuffer and
+   * the animation explicit HVS layers, use premade unscaled ARGB lists, and
+   * only publish a rebuilt list at a PV2 frame boundary.  The initial HDMI
+   * colour-bar list remains active until this complete list is ready. */
+  const unsigned size = 96u;
+  gfx_surface *linux_fb = gfx_create_surface((void *)(uintptr_t)(
+      BCM_SDRAM_BUS_ADDR_BASE_NO_L2 | HDMI_FB_PRIMARY_PHYS), width, height,
+      width, GFX_FORMAT_ARGB_8888);
+  gfx_surface *overlay_fb = gfx_create_surface((void *)(uintptr_t)(
+      BCM_SDRAM_BUS_ADDR_BASE_NO_L2 | HDMI_FB_BACK_PHYS), size, size, size,
+      GFX_FORMAT_ARGB_8888);
+  hvs_layer *base_layer = NULL;
+  hvs_layer *overlay_layer = NULL;
+  bcm_animation animation;
+  bcm_animation_surface surface;
+  if (!linux_fb || !overlay_fb) {
+    puts("HDMI: unable to allocate animation surfaces");
+    return;
+  }
+  linux_fb->free_on_destroy = false;
+  overlay_fb->free_on_destroy = false;
+  surface = (bcm_animation_surface) {
+    .width = size, .height = size, .stride_bytes = size * 4u,
+    .pixel_format = BCM_ANIMATION_ARGB8888, .cpu_address = (uintptr_t)overlay_fb->ptr,
+    .dma_bus_address = (uintptr_t)overlay_fb->ptr, .allocation_bytes = overlay_fb->len,
+    .safe_width = size, .safe_height = size,
+  };
+  if (bcm_animation_init(&animation, &surface, 1) ||
+      bcm_animation_arm_released(&animation) || bcm_animation_start(&animation)) {
+    puts("HDMI: shared animation initialization failed"); return;
+  }
+  bcm_animation_render(&animation);
+  gfx_flush(overlay_fb);
+
+  base_layer = malloc(sizeof(*base_layer));
+  overlay_layer = malloc(sizeof(*overlay_layer));
+  if (!base_layer || !overlay_layer) {
+    puts("HDMI: unable to allocate animation layers");
+    return;
+  }
+  mk_unity_layer(base_layer, linux_fb, 10, 0, 0);
+  base_layer->alpha_mode = alpha_mode_pipeline;
+  hvs_allocate_premade(base_layer, 7);
+  mk_unity_layer(overlay_layer, overlay_fb, 20, 16u,
+                 height > 272u ? (height - size) / 2u : 0u);
+  overlay_layer->alpha_mode = alpha_mode_pipeline;
+  hvs_allocate_premade(overlay_layer, 7);
+  if (!base_layer->premade_dlist || !overlay_layer->premade_dlist) {
+    puts("HDMI: unable to allocate animation display lists");
+    return;
+  }
+  hvs_regen_noscale_noviewport(base_layer);
+  hvs_regen_noscale_noviewport(overlay_layer);
+
+  mutex_acquire(&channels[1].lock);
+  hvs_dlist_add(1, base_layer);
+  hvs_dlist_add(1, overlay_layer);
+  hvs_update_dlist(1);
+  mutex_release(&channels[1].lock);
+
+  struct pixel_valve *pv = getPvAddr(2);
+  static uint32_t sentinel[(128u / 4u) * (64u / 4u)];
+  volatile uint32_t *pixels = (volatile uint32_t *)linux_fb->ptr;
+  unsigned n = 0;
+  for (unsigned y = 0; y < 64u; y += 4u)
+    for (unsigned x = 0; x < 128u; x += 4u)
+      sentinel[n++] = pixels[y * width + x];
+
+  /* The ordered HDMI setup does not call hvs_configure_channel(), which
+   * enables the PV frame event on the normal path.  VPU IRQs are already
+   * masked after ARM release, so poll the event just as DSI does. */
+  puts("HDMI: animation enabling PV2 VFP event");
+  uart_flush_tx(0);
+  pv->int_enable = PV_INTEN_VFP_START;
+  pv->int_status = PV_INTEN_VFP_START;
+  puts("HDMI: animation waiting for first PV2 VFP");
+  uart_flush_tx(0);
+  while (!(pv->int_status & PV_INTEN_VFP_START)) asm volatile("nop");
+  pv->int_status = PV_INTEN_VFP_START;
+  *REG32(SCALER_DISPLIST1) = channels[1].dlist_target;
+  puts("HDMI: first animation list committed");
+  uart_flush_tx(0);
+
+  for (unsigned x = 16u;; x += 4u) {
+    bool changed = false;
+    n = 0;
+    for (unsigned y = 0; y < 64u && !changed; y += 4u)
+      for (unsigned sx = 0; sx < 128u; sx += 4u)
+        if (pixels[y * width + sx] != sentinel[n++]) { changed = true; break; }
+    if (changed) {
+      bcm_animation_request_takeover(&animation);
+      mutex_acquire(&channels[1].lock);
+      overlay_layer->visible = false;
+      hvs_update_dlist(1);
+      mutex_release(&channels[1].lock);
+      pv->int_status = PV_INTEN_VFP_START;
+      while (!(pv->int_status & PV_INTEN_VFP_START)) asm volatile("nop");
+      pv->int_status = PV_INTEN_VFP_START;
+      *REG32(SCALER_DISPLIST1) = channels[1].dlist_target;
+      bcm_animation_stop(&animation);
+      puts("HDMI: framebuffer console takeover detected");
+      for (;;) asm volatile("nop");
+    }
+    if (x > width - 112u) x = 16u;
+    mutex_acquire(&channels[1].lock);
+    overlay_layer->x = x;
+    hvs_regen_noscale_noviewport(overlay_layer);
+    hvs_update_dlist(1);
+    mutex_release(&channels[1].lock);
+    pv->int_status = PV_INTEN_VFP_START;
+    while (!(pv->int_status & PV_INTEN_VFP_START)) asm volatile("nop");
+    pv->int_status = PV_INTEN_VFP_START;
+    *REG32(SCALER_DISPLIST1) = channels[1].dlist_target;
+  }
 }
