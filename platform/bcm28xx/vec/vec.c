@@ -1,4 +1,5 @@
 #include <app.h>
+#include <dev/uart.h>
 #include <lk/console_cmd.h>
 #include <lk/init.h>
 #include <lk/reg.h>
@@ -47,16 +48,32 @@ int bcm_vec_init(int standard) {
   int width;
   int height;
 
-  puts("VEC init");
+  puts("VEC: initialization begin");
+  uart_flush_tx(0);
 
 #if !defined(RPI4)
   power_up_usb();
 #endif
+  puts("VEC: power setup complete; initializing HVS");
+  uart_flush_tx(0);
   hvs_initialize();
+
+  /* Match the earlier PAL bring-up's HVS and 324 MHz PLLH_AUX setup. */
+  *REG32(SCALER_DISPCTRL) &= ~SCALER_DISPCTRL_ENABLE;
+  *REG32(SCALER_DISPCTRL) = 0x800c007fu;
+  *REG32(SCALER_DISPEOLN) = 0x40000000u;
+  puts("VEC: HVS initialized; configuring PLLH");
+  uart_flush_tx(0);
+  setup_pllh(648000000u, 2, 6);
 
   // TODO, this assumes freq_plla_per is a multiple of 108mhz
   // it should check if it isnt, and report an error
-  clock_set_vec(108000000, PERI_PLLA_PER);
+  if (!clock_set_vec(108000000, PERI_PLLH_AUX)) {
+    puts("VEC: failed to configure 108 MHz encoder clock");
+    return -1;
+  }
+  puts("VEC: encoder clock configured; measuring clock");
+  uart_flush_tx(0);
 
   int rate = measure_clock(29);
   printf("vec rate: %f, plla: %lld, pllc: %lld\n", ((double)rate)/1000/1000, freq_plla_per, freq_pllc_per);
@@ -105,6 +122,8 @@ int bcm_vec_init(int standard) {
   }
   *REG32(VEC_DAC_MISC) = VEC_DAC_MISC_VID_ACT | VEC_DAC_MISC_DAC_RST_N;
   *REG32(VEC_CFG) = VEC_CFG_VEC_EN;
+  puts("VEC: encoder enabled; configuring PV2");
+  uart_flush_tx(0);
   struct pv_timings t;
   t.clock_mux = clk_vec;
   bool ntsc_mode = standard != 0;
@@ -126,8 +145,8 @@ int bcm_vec_init(int standard) {
     t.hbp = 60;
     t.hactive = 720;
   } else {
-    t.vfp = 5; t.vsync = 5; t.vbp = 19; t.vactive = 288;
-    t.vfp_even = 5; t.vsync_even = 5; t.vbp_even = 19; t.vactive_even = 288;
+    t.vfp = 5; t.vsync = 5; t.vbp = 15; t.vactive = 288;
+    t.vfp_even = 5; t.vsync_even = 5; t.vbp_even = 14; t.vactive_even = 288;
     t.interlaced = true; t.hfp = 12; t.hsync = 64; t.hbp = 68; t.hactive = 720;
   }
 #ifdef RPI4
@@ -137,7 +156,7 @@ int bcm_vec_init(int standard) {
 #endif
 
   uint32_t t0 = *REG32(ST_CLO);
-  printf("NTSC on at %d\n", t0);
+  printf("VEC: %s initialized at %u\n", ntsc_mode ? "NTSC" : "PAL", t0);
 
   width = t.hactive;
   height = t.vactive * 2;
@@ -148,6 +167,10 @@ int bcm_vec_init(int standard) {
 
   hvs_configure_channel(1, width, height, true);
   hvs_set_background_color(channel, 0x0);
+  /* The composite backend publishes its initial framebuffer list before
+   * starting PV2, so the first field cannot scan an empty or stale list. */
+  puts("VEC: HVS channel configured; PV2 awaiting base list");
+  uart_flush_tx(0);
 
 #ifdef WITH_TGA
   //logo = tga_decode(pilogo, sizeof(pilogo), GFX_FORMAT_ARGB_8888);

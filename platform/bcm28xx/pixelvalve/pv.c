@@ -89,7 +89,7 @@ void setup_pixelvalve(const struct pv_timings *t, int pvnr) {
   if (t->interlaced) {
     puts("interlaced pv");
     rawpv->verta_even = (t->vbp_even << 16) | t->vsync_even;
-    rawpv->vertb_even = (t->vfp << 16) | t->vactive_even;
+    rawpv->vertb_even = (t->vfp_even << 16) | t->vactive_even;
   }
 
 #define CLK_SELECT(n) ((n & 3) << 2)
@@ -104,6 +104,15 @@ void setup_pixelvalve(const struct pv_timings *t, int pvnr) {
   pv_vc_value[pvnr] = (dsi ? BV(3) : BV(0)) | // DSI output mode or legacy video enable
             BV(1) | // continuous
             (t->interlaced ? BV(4) : 0);
+  if (t->interlaced && t->clock_mux == clk_vec && t->vactive == 288) {
+    /* PAL VEC uses even field first. Delay the odd field by half a line
+     * plus one VEC clock, as in the VC4 CRTC interlace sequence. */
+    unsigned int htotal = t->hactive + t->hfp + t->hsync + t->hbp;
+    unsigned int odd_delay = htotal / 2u + 1u;
+    pv_vc_value[pvnr] |= odd_delay << 6;
+    rawpv->vsyncd_even = 0;
+    printf("PV%d: PAL odd-field delay %u clocks\n", pvnr, odd_delay);
+  }
   /* HDMI PV2 VC writes can stall while the HDMI scheduler is still being
    * brought up. DSI retains the original early VC programming sequence. */
   if (dsi)

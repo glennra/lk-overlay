@@ -14,6 +14,8 @@ enum bcm_display_output { BCM_DISPLAY_OUTPUT_AUTO = 0, BCM_DISPLAY_OUTPUT_DSI,
 enum bcm_display_composite_standard { BCM_DISPLAY_STANDARD_PAL = 0,
   BCM_DISPLAY_STANDARD_NTSC };
 
+#define BCM_DISPLAY_BOOT_MAGIC 0x574f0000u
+
 enum bcm_display_error {
   BCM_DISPLAY_OK = 0,
   BCM_DISPLAY_NOT_READY,

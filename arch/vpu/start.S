@@ -10,11 +10,15 @@ FUNCTION(_start)
 .global _start
 _start:
   di
+  mov r4, r0
 
   // check if the 2nd core ran this entry point
   version r0
   btest r0, 0x10
   bne core2_loop
+
+  mov r5, bcm_boot_display_selection
+  st r4, (r5)
 
   mov sp, _fstack
 #ifdef MANUAL_UART
@@ -38,6 +42,13 @@ core2_start:
   bl core2_entry
 loop2:
   b loop2
+
+.section .data
+.align 4
+.global bcm_boot_display_selection
+bcm_boot_display_selection:
+  .long 0
+.section .text.start
 
 #ifdef MANUAL_UART
 manual_uart_cfg:

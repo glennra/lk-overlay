@@ -94,6 +94,14 @@ static const framebuffer_layout kHdmiFixed720 = {
   0x07400000U, 0x00800000U, 0x07400000U, 0x07800000U,
   1280U, 720U, 1280U, 0x00384000U, "framebuffer-pool@7400000"
 };
+static const framebuffer_layout kCompositePal = {
+  0x07800000U, 0x00400000U, 0x07800000U, 0x07a00000U,
+  720U, 576U, 720U, 0x00195000U, "framebuffer-pool@7800000"
+};
+static const framebuffer_layout kCompositeNtsc = {
+  0x07800000U, 0x00400000U, 0x07800000U, 0x07a00000U,
+  720U, 480U, 720U, 0x00151800U, "framebuffer-pool@7800000"
+};
 
 typedef void __attribute__((noreturn)) (*linux_t)(uint32_t, uint32_t, void*);
 
@@ -174,7 +182,7 @@ static void reserve_framebuffer_pool(void *fdt) {
   const framebuffer_layout *layout = NULL;
   const framebuffer_layout *layouts[] = { &kDsiFramebuffer, &kHdmiFramebuffer,
       &kHdmiAuto1080, &kHdmiAuto800, &kHdmiAuto720,
-      &kHdmiFixed800, &kHdmiFixed720 };
+      &kHdmiFixed800, &kHdmiFixed720, &kCompositePal, &kCompositeNtsc };
   for (unsigned i = 0; i < sizeof(layouts) / sizeof(layouts[0]); ++i) {
     const framebuffer_layout *candidate = layouts[i];
     if (base == candidate->pool_base && size == candidate->pool_size &&
@@ -220,7 +228,9 @@ static void reserve_framebuffer_pool(void *fdt) {
     panic("reserved-memory cell sizes do not match root");
   }
 
-  const char *pool_path = layout != &kDsiFramebuffer ?
+  const bool composite = layout == &kCompositePal || layout == &kCompositeNtsc;
+  const char *pool_path = composite ? "/reserved-memory/framebuffer-pool@7800000" :
+      layout != &kDsiFramebuffer ?
       "/reserved-memory/framebuffer-pool@7400000" :
       "/reserved-memory/framebuffer-pool@7000000";
   int pool = fdt_path_offset(fdt, pool_path);
@@ -251,8 +261,11 @@ static void reserve_framebuffer_pool(void *fdt) {
    * ioremap_wc(), which is rejected for ordinary mapped ARM RAM. */
   fdt_require(fdt_setprop(fdt, pool, "no-map", NULL, 0),
               "framebuffer pool no-map");
+  if (composite)
+    fdt_require(fdt_add_mem_rsv(fdt, base, size), "reserve composite overlay pool");
 
   const char *simplefb_name =
+      composite ? "framebuffer@7800000" :
       layout != &kDsiFramebuffer ? "framebuffer@7400000" :
       (active == primary ? "framebuffer@7000000" : "framebuffer@7177000");
   int simplefb = fdt_subnode_offset(fdt, root, simplefb_name);

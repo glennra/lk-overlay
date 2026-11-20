@@ -5,6 +5,7 @@
 #include <stdio.h>
 #include <arch.h>
 #include <stdlib.h>
+#include <platform/bcm28xx/display_handoff.h>
 
 #include "stage1.h"
 #include "boot_timing.h"
@@ -29,6 +30,31 @@ static ssize_t fs_read_wrapper(struct elf_handle *handle, void *buf, uint64_t of
   return fs_read_file(handle->read_hook_arg, buf, offset, len);
 }
 
+/* DISP.CFG is an optional 8.3 filename in the FAT root.  Pass a validated
+ * scalar in the stage-two entry register; no first-stage pointers survive. */
+static uint32_t read_display_selection(void) {
+  filehandle *config;
+  struct file_stat stat;
+  static char text[4096];
+  enum bcm_display_output output = BCM_DISPLAY_OUTPUT_AUTO;
+  enum bcm_display_composite_standard standard = BCM_DISPLAY_STANDARD_PAL;
+  if (fs_open_file("/root/DISP.CFG", &config)) {
+    puts("DISPLAY: DISP.CFG absent; auto/PAL");
+    return BCM_DISPLAY_BOOT_MAGIC;
+  }
+  if (fs_stat_file(config, &stat) || stat.size > sizeof(text) ||
+      fs_read_file(config, text, 0, stat.size) != (ssize_t)stat.size ||
+      bcm_display_parse_config(text, stat.size, &output, &standard)) {
+    puts("DISPLAY: invalid DISP.CFG; auto/PAL");
+    output = BCM_DISPLAY_OUTPUT_AUTO;
+    standard = BCM_DISPLAY_STANDARD_PAL;
+  }
+  fs_close_file(config);
+  printf("DISPLAY: config output=%s standard=%s\n", bcm_display_output_name(output),
+         standard == BCM_DISPLAY_STANDARD_PAL ? "pal" : "ntsc");
+  return BCM_DISPLAY_BOOT_MAGIC | ((uint32_t)standard << 8) | output;
+}
+
 void try_sd_boot(const char *device) {
   int ret;
   logf("trying to boot from %s\n", device);
@@ -42,6 +68,7 @@ void try_sd_boot(const char *device) {
     printf("mount failure: %d\n", ret);
     return;
   }
+  uint32_t display_selection = read_display_selection();
   filehandle *stage2;
   ret = fs_open_file("/root/boot/lk.elf", &stage2);
   if (ret) {
@@ -79,7 +106,7 @@ void try_sd_boot(const char *device) {
 #endif
   stage1_boot_timing_mark(STAGE1_BOOT_T2_STAGE2_LOAD_COMPLETE);
   fs_close_file(stage2);
-  arch_chain_load(entry, 0, 0, 0, 0);
+  arch_chain_load(entry, display_selection, 0, 0, 0);
   return;
   closefile:
     fs_close_file(stage2);

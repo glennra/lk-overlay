@@ -3,6 +3,8 @@ LOCAL_DIR := $(GET_LOCAL_DIR)
 MODULE := $(LOCAL_DIR)
 
 MODULE_DEPS += lib/elf
+GLOBAL_INCLUDES += platform/bcm28xx/display-handoff/include
+MODULE_SRCS += platform/bcm28xx/display-handoff/config.c
 
 ifeq ($(CONFIG_NET),1)
   MODULE_DEPS += lib/net-utils

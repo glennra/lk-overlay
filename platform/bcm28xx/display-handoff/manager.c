@@ -1,7 +1,7 @@
 #include <lk/init.h>
+#include <dev/uart.h>
 #include <stdio.h>
 #include <platform/bcm28xx/display_handoff.h>
-#include <string.h>
 
 int bcm_display_probe_hdmi(void);
 int bcm_display_probe_dsi(void);
@@ -14,7 +14,7 @@ const char *bcm_display_backend_name_dsi(void);
 void bcm_display_run_boot_animation_hdmi(void);
 void bcm_display_run_boot_animation_dsi(void);
 int bcm_display_probe_composite(void);
-int bcm_display_init_composite(void);
+int bcm_display_init_composite(enum bcm_display_composite_standard standard);
 int bcm_display_get_handoff_composite(struct bcm_display_handoff *out);
 void bcm_display_run_boot_animation_composite(void);
 const char *bcm_display_backend_name(void);
@@ -24,45 +24,7 @@ static int selected_ready;
 static enum bcm_display_output requested_output = BCM_DISPLAY_OUTPUT_AUTO;
 static enum bcm_display_composite_standard composite_standard = BCM_DISPLAY_STANDARD_PAL;
 
-const char *bcm_display_output_name(enum bcm_display_output output) {
-  switch (output) { case BCM_DISPLAY_OUTPUT_DSI: return "dsi";
-    case BCM_DISPLAY_OUTPUT_HDMI: return "hdmi"; case BCM_DISPLAY_OUTPUT_COMPOSITE: return "composite";
-    default: return "auto"; }
-}
-
-static int config_value(const char *text, size_t length, const char *key,
-                        const char **value, size_t *value_length) {
-  size_t key_len = strlen(key);
-  for (size_t i = 0; i + key_len < length; ++i) {
-    if ((i == 0 || text[i - 1] == '\n') && !strncmp(text + i, key, key_len) && text[i + key_len] == '=') {
-      size_t start = i + key_len + 1, end = start;
-      while (end < length && text[end] != '\n' && text[end] != '\r' && text[end] != '#') ++end;
-      while (end > start && (text[end - 1] == ' ' || text[end - 1] == '\t')) --end;
-      *value = text + start; *value_length = end - start; return 0;
-    }
-  }
-  return -1;
-}
-
-int bcm_display_parse_config(const char *text, size_t length,
-                             enum bcm_display_output *output,
-                             enum bcm_display_composite_standard *standard) {
-  const char *value; size_t n;
-  if (!output || !standard || length > 4096) return -1;
-  *output = BCM_DISPLAY_OUTPUT_AUTO; *standard = BCM_DISPLAY_STANDARD_PAL;
-  if (text && !config_value(text, length, "display.output", &value, &n)) {
-    if (n == 3 && !strncmp(value, "dsi", n)) *output = BCM_DISPLAY_OUTPUT_DSI;
-    else if (n == 4 && !strncmp(value, "hdmi", n)) *output = BCM_DISPLAY_OUTPUT_HDMI;
-    else if (n == 9 && !strncmp(value, "composite", n)) *output = BCM_DISPLAY_OUTPUT_COMPOSITE;
-    else if (n != 4 || strncmp(value, "auto", n)) return -1;
-  }
-  if (text && !config_value(text, length, "display.composite_standard", &value, &n)) {
-    if (n == 3 && !strncmp(value, "pal", n)) *standard = BCM_DISPLAY_STANDARD_PAL;
-    else if (n == 5 && !strncmp(value, "ntsc", n)) *standard = BCM_DISPLAY_STANDARD_NTSC;
-    else return -1;
-  }
-  return 0;
-}
+extern uint32_t bcm_boot_display_selection;
 
 static const char *probe_name(int result) {
   switch (result) {
@@ -74,11 +36,20 @@ static const char *probe_name(int result) {
 }
 
 int bcm_display_manager_init(void) {
+  uint32_t boot_selection = bcm_boot_display_selection;
+  if ((boot_selection & 0xffff0000u) == BCM_DISPLAY_BOOT_MAGIC &&
+      (boot_selection & 0xffu) <= BCM_DISPLAY_OUTPUT_COMPOSITE &&
+      ((boot_selection >> 8) & 0xffu) <= BCM_DISPLAY_STANDARD_NTSC) {
+    requested_output = boot_selection & 0xffu;
+    composite_standard = (boot_selection >> 8) & 0xffu;
+  }
   printf("DISPLAY: output=%s composite-standard=%s\n",
          bcm_display_output_name(requested_output), composite_standard == BCM_DISPLAY_STANDARD_PAL ? "pal" : "ntsc");
   if (requested_output == BCM_DISPLAY_OUTPUT_COMPOSITE) {
     selected = BCM_DISPLAY_COMPOSITE;
-    if (bcm_display_init_composite() || bcm_display_get_handoff_composite(&(struct bcm_display_handoff){0})) return -1;
+    puts("DISPLAY: starting COMPOSITE initialization");
+    uart_flush_tx(0);
+    if (bcm_display_init_composite(composite_standard) || bcm_display_get_handoff_composite(&(struct bcm_display_handoff){0})) return -1;
     selected_ready = 1; puts("DISPLAY: selected=COMPOSITE reason=explicit-config"); return 0;
   }
   int dsi_probe = bcm_display_probe_dsi();
@@ -89,7 +60,8 @@ int bcm_display_manager_init(void) {
       BCM_DISPLAY_PROBE_ABSENT : BCM_DISPLAY_PROBE_UNKNOWN;
   printf("DISPLAY: HDMI probe=%s\n", probe_name(hdmi_probe));
 
-  if (requested_output == BCM_DISPLAY_OUTPUT_DSI || dsi_probe == BCM_DISPLAY_PROBE_PRESENT) {
+  if (requested_output == BCM_DISPLAY_OUTPUT_DSI ||
+      (requested_output == BCM_DISPLAY_OUTPUT_AUTO && dsi_probe == BCM_DISPLAY_PROBE_PRESENT)) {
     selected = BCM_DISPLAY_DSI;
     puts("DISPLAY: selected=DSI reason=panel-present");
     if (bcm_display_init_dsi()) {
